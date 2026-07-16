@@ -67,6 +67,7 @@ git -C ~/skills commit -m 'Adopt my-skill'
 sm build --repo ~/skills codex.global
 sm apply --repo ~/skills codex.global
 sm verify --repo ~/skills codex.global
+sm exec --repo ~/skills codex.global -- exec "review this repository"
 
 sm exec --repo ~/skills pi.global -- "review this repository"
 sm exec --repo ~/skills claude.global -- "review this repository"
@@ -87,3 +88,5 @@ The `claude` adapter compiles the generation as a native Claude plugin. It launc
 Claude stores macOS Keychain credentials per `CLAUDE_CONFIG_DIR`. The first `sm exec` for a Claude consumer therefore requires logging in to that stable profile once, or supplying an official environment credential such as `CLAUDE_CODE_OAUTH_TOKEN`. Skill generation changes do not change the profile path or require another login.
 
 The `codex` adapter verifies the real Codex `skills/list` projection through `codex app-server`. System skills are platform-owned. Any other enabled user, repository, admin, or plugin skill whose resolved path is outside the active generation makes verification fail. Those skills must be adopted into the SSOT or disabled at their original source; `sm` does not silently mask a second source of truth.
+
+`sm exec` can close a Codex CLI profile without deleting installed plugins. It reads the live projection, derives temporary `skills.config` disables for every external non-system path, runs a second `skills/list`, and starts Codex only when the enabled set equals the active generation. User `--config`, `--profile`, and `--cd` overrides are rejected because they would invalidate that proof.

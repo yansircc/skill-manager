@@ -293,6 +293,50 @@ func TestCodexVerifyUsesRuntimeDiscoveryProjection(t *testing.T) {
 	}
 }
 
+func TestCodexExecDisablesExternalSkillsAndReprobes(t *testing.T) {
+	repo := newTestRepository(t)
+	target := filepath.Join(t.TempDir(), "skills")
+	cache := filepath.Join(t.TempDir(), "cache")
+	t.Cleanup(func() { _ = makeWritable(cache) })
+	writeSkill(t, repo, "alpha", "alpha")
+	writeConsumer(t, repo, "codex.global", Consumer{Adapter: "codex", Target: target, Skills: []string{"alpha"}})
+	commitAll(t, repo, "codex consumer")
+	result, err := Apply(repo, "HEAD", "codex.global", cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(t.TempDir(), "foreign", "SKILL.md")
+	writeFile(t, foreign, "foreign")
+	authorized := CodexSkill{Name: "alpha", Path: filepath.Join(result.Generation, "alpha", "SKILL.md"), Scope: "user", Enabled: true}
+
+	originalList := listCodexSkills
+	originalConfigured := listConfiguredCodexSkills
+	originalExecutable := findExecutable
+	t.Cleanup(func() {
+		listCodexSkills = originalList
+		listConfiguredCodexSkills = originalConfigured
+		findExecutable = originalExecutable
+	})
+	listCodexSkills = func(string) ([]CodexSkill, error) {
+		return []CodexSkill{authorized, {Name: "foreign", Path: foreign, Scope: "plugin", Enabled: true}}, nil
+	}
+	listConfiguredCodexSkills = func(_ string, arguments []string) ([]CodexSkill, error) {
+		if len(arguments) != 2 || !strings.Contains(arguments[1], foreign) || !strings.Contains(arguments[1], "enabled=false") {
+			t.Fatalf("configured probe arguments = %#v", arguments)
+		}
+		return []CodexSkill{authorized, {Name: "system", Path: "/system/SKILL.md", Scope: "system", Enabled: true}}, nil
+	}
+	findExecutable = func(string) (string, error) { return "/usr/bin/true", nil }
+
+	_, command, err := AgentCommand(repo, "HEAD", "codex.global", cache, []string{"exec", "review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(command.Args) < 5 || command.Args[1] != "-c" || command.Args[3] != "exec" {
+		t.Fatalf("command args = %#v", command.Args)
+	}
+}
+
 func TestClaudeAgentCommandUsesIsolatedPluginProjection(t *testing.T) {
 	repo := newTestRepository(t)
 	cache := filepath.Join(t.TempDir(), "cache")

@@ -370,6 +370,8 @@ func AgentCommand(repo, ref, consumerName, cache string, agentArgs []string) (Re
 		return piAgentCommand(built, agentArgs)
 	case "claude":
 		return claudeAgentCommand(built, agentArgs)
+	case "codex":
+		return codexAgentCommand(built, agentArgs)
 	default:
 		return Result{}, nil, fmt.Errorf("consumer %q adapter %q has no exec contract", consumerName, built.Adapter)
 	}

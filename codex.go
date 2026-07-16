@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,15 +22,22 @@ type CodexSkill struct {
 }
 
 var listCodexSkills = probeCodexSkills
+var listConfiguredCodexSkills = probeCodexSkillsWithArgs
 
 func probeCodexSkills(cwd string) ([]CodexSkill, error) {
+	return probeCodexSkillsWithArgs(cwd, nil)
+}
+
+func probeCodexSkillsWithArgs(cwd string, configArgs []string) ([]CodexSkill, error) {
 	binary, err := exec.LookPath("codex")
 	if err != nil {
 		return nil, fmt.Errorf("find codex executable: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, binary, "app-server", "--stdio")
+	arguments := []string{"app-server", "--stdio"}
+	arguments = append(arguments, configArgs...)
+	command := exec.CommandContext(ctx, binary, arguments...)
 	command.Dir = cwd
 	stdin, err := command.StdinPipe()
 	if err != nil {
@@ -116,11 +125,115 @@ func probeCodexSkills(cwd string) ([]CodexSkill, error) {
 	}
 }
 
+func codexAgentCommand(built Result, agentArgs []string) (Result, *exec.Cmd, error) {
+	for _, argument := range agentArgs {
+		if argument == "-c" || argument == "--config" || strings.HasPrefix(argument, "--config=") ||
+			argument == "-p" || argument == "--profile" || strings.HasPrefix(argument, "--profile=") ||
+			argument == "-C" || argument == "--cd" || strings.HasPrefix(argument, "--cd=") {
+			return Result{}, nil, fmt.Errorf("agent argument %q can replace the verified Codex discovery context", argument)
+		}
+	}
+	if err := validateActiveTarget(built.Target, built.Generation); err != nil {
+		return Result{}, nil, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return Result{}, nil, err
+	}
+	discovered, err := listCodexSkills(cwd)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	config, err := codexDisableConfig(discovered, built.Generation)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	configArgs := []string{"-c", config}
+	projected, err := listConfiguredCodexSkills(cwd, configArgs)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	if err := validateCodexClosure(projected, built.Generation); err != nil {
+		return Result{}, nil, fmt.Errorf("codex execution profile did not close discovery: %w", err)
+	}
+	binary, err := findExecutable("codex")
+	if err != nil {
+		return Result{}, nil, fmt.Errorf("find codex executable: %w", err)
+	}
+	arguments := append(configArgs, agentArgs...)
+	return built, exec.Command(binary, arguments...), nil
+}
+
+func codexDisableConfig(skills []CodexSkill, generation string) (string, error) {
+	canonicalGeneration, err := filepath.EvalSymlinks(generation)
+	if err != nil {
+		return "", err
+	}
+	paths := make(map[string]struct{})
+	for _, skill := range skills {
+		if !skill.Enabled || skill.Scope == "system" {
+			continue
+		}
+		canonical, err := filepath.EvalSymlinks(skill.Path)
+		if err == nil && within(canonicalGeneration, canonical) {
+			continue
+		}
+		paths[skill.Path] = struct{}{}
+	}
+	ordered := make([]string, 0, len(paths))
+	for path := range paths {
+		ordered = append(ordered, path)
+	}
+	sort.Strings(ordered)
+	entries := make([]string, 0, len(ordered))
+	for _, path := range ordered {
+		entries = append(entries, "{path="+strconv.Quote(path)+",enabled=false}")
+	}
+	return "skills.config=[" + strings.Join(entries, ",") + "]", nil
+}
+
+func validateActiveTarget(target, generation string) error {
+	info, err := os.Lstat(target)
+	if err != nil {
+		return fmt.Errorf("inspect active target: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return fmt.Errorf("active target is not an sm projection: %s", target)
+	}
+	actual, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return err
+	}
+	want, err := filepath.EvalSymlinks(generation)
+	if err != nil {
+		return err
+	}
+	if actual != want {
+		return fmt.Errorf("active target points to %s, want %s", actual, want)
+	}
+	return nil
+}
+
 func validateCodexClosure(skills []CodexSkill, generation string) error {
 	canonicalGeneration, err := filepath.EvalSymlinks(generation)
 	if err != nil {
 		return fmt.Errorf("resolve generation for codex closure: %w", err)
 	}
+	expected := make(map[string]string)
+	entries, err := os.ReadDir(canonicalGeneration)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(canonicalGeneration, entry.Name(), "SKILL.md")
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+			expected[path] = entry.Name()
+		}
+	}
+	observed := make(map[string]struct{})
 	var unmanaged []string
 	for _, skill := range skills {
 		if !skill.Enabled || skill.Scope == "system" {
@@ -133,11 +246,27 @@ func validateCodexClosure(skills []CodexSkill, generation string) error {
 		}
 		if !within(canonicalGeneration, path) {
 			unmanaged = append(unmanaged, fmt.Sprintf("%s (%s)", skill.Path, skill.Name))
+			continue
+		}
+		observed[path] = struct{}{}
+	}
+	var missing []string
+	for path, name := range expected {
+		if _, ok := observed[path]; !ok {
+			missing = append(missing, fmt.Sprintf("%s (%s)", path, name))
 		}
 	}
-	if len(unmanaged) == 0 {
+	if len(unmanaged) == 0 && len(missing) == 0 {
 		return nil
 	}
 	sort.Strings(unmanaged)
-	return fmt.Errorf("codex discovery closure contains enabled skills outside the SSOT generation:\n  %s", strings.Join(unmanaged, "\n  "))
+	sort.Strings(missing)
+	parts := make([]string, 0, 2)
+	if len(unmanaged) != 0 {
+		parts = append(parts, "enabled skills outside the SSOT generation:\n  "+strings.Join(unmanaged, "\n  "))
+	}
+	if len(missing) != 0 {
+		parts = append(parts, "authorized skills missing from Codex discovery:\n  "+strings.Join(missing, "\n  "))
+	}
+	return fmt.Errorf("codex discovery closure mismatch: %s", strings.Join(parts, "\n"))
 }

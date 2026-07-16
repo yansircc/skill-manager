@@ -414,6 +414,46 @@ func TestAdoptMovesCanonicalSkill(t *testing.T) {
 	assertFileContains(t, filepath.Join(destination, "SKILL.md"), "canonical")
 }
 
+func TestPublishReplacesCanonicalSkillAndKeepsGeneratorArtifact(t *testing.T) {
+	repo := newTestRepository(t)
+	writeSkill(t, repo, "my-skill", "old")
+	external := t.TempDir()
+	source := filepath.Join(external, "release")
+	writeFile(t, filepath.Join(source, "SKILL.md"), "new")
+	writeFile(t, filepath.Join(source, "bin", "run"), "executable")
+	if err := os.Chmod(filepath.Join(source, "bin", "run"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	destination, err := Publish(repo, source, "my-skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileContains(t, filepath.Join(destination, "SKILL.md"), "new")
+	assertFileContains(t, filepath.Join(source, "SKILL.md"), "new")
+	info, err := os.Stat(filepath.Join(destination, "bin", "run"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Fatal("published executable lost its mode")
+	}
+}
+
+func TestPublishRejectsPollutionWithoutChangingCanonicalSkill(t *testing.T) {
+	repo := newTestRepository(t)
+	writeSkill(t, repo, "my-skill", "old")
+	external := t.TempDir()
+	source := filepath.Join(external, "release")
+	writeFile(t, filepath.Join(source, "SKILL.md"), "new")
+	writeFile(t, filepath.Join(source, ".env.local"), "secret")
+
+	if _, err := Publish(repo, source, "my-skill"); err == nil || !strings.Contains(err.Error(), "environment") {
+		t.Fatalf("Publish error = %v, want local environment rejection", err)
+	}
+	assertFileContains(t, filepath.Join(repo, "skills", "my-skill", "SKILL.md"), "old")
+}
+
 func TestScanDiscoversCandidatesWithoutGrantingOwnership(t *testing.T) {
 	repo := newTestRepository(t)
 	sources := t.TempDir()

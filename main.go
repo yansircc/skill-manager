@@ -92,6 +92,23 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, destination)
 		return nil
 
+	case "publish":
+		fs := newFlagSet("publish", stderr)
+		repo := fs.String("repo", ".", "SSOT repository")
+		id := fs.String("id", "", "stable skill id; defaults to source directory name")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 1 {
+			return fmt.Errorf("usage: sm publish [--repo path] [--id id] source")
+		}
+		destination, err := Publish(*repo, fs.Arg(0), *id)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, destination)
+		return nil
+
 	case "build", "apply", "verify", "exec":
 		fs := newFlagSet(args[0], stderr)
 		repo := fs.String("repo", ".", "SSOT repository")
@@ -161,6 +178,7 @@ Usage:
   sm scan [--repo path] [--json] root...
   sm init [path]
   sm adopt [--repo path] [--id id] source
+  sm publish [--repo path] [--id id] source
   sm build [--repo path] [--ref commit] consumer
   sm apply [--repo path] [--ref commit] consumer
   sm verify [--repo path] [--ref commit] consumer

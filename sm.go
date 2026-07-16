@@ -114,6 +114,130 @@ func Adopt(repo, source, id string) (string, error) {
 	return destination, nil
 }
 
+// Publish copies a complete generator artifact into the SSOT worktree. HEAD
+// remains the published state until the caller commits the resulting change.
+func Publish(repo, source, id string) (string, error) {
+	root, err := repositoryRoot(repo)
+	if err != nil {
+		return "", err
+	}
+	source, err = filepath.Abs(source)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		return "", fmt.Errorf("inspect source: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("source is not a directory: %s", source)
+	}
+	if id == "" {
+		id = filepath.Base(source)
+	}
+	if err := validateID(id); err != nil {
+		return "", err
+	}
+	if err := validateCanonicalSkill(source); err != nil {
+		return "", err
+	}
+
+	destination := filepath.Join(root, "skills", id)
+	if within(destination, source) {
+		return "", fmt.Errorf("publish source must be outside canonical destination: %s", destination)
+	}
+	parent := filepath.Dir(destination)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return "", err
+	}
+	staged, err := os.MkdirTemp(parent, ".sm-publish-")
+	if err != nil {
+		return "", err
+	}
+	keepStaged := false
+	defer func() {
+		if !keepStaged {
+			_ = os.RemoveAll(staged)
+		}
+	}()
+	if err := copyCanonicalSkill(source, staged); err != nil {
+		return "", fmt.Errorf("stage skill: %w", err)
+	}
+	if err := validateCanonicalSkill(staged); err != nil {
+		return "", fmt.Errorf("staged skill is invalid: %w", err)
+	}
+
+	retired := staged + ".retired"
+	hadDestination := false
+	if _, err := os.Lstat(destination); err == nil {
+		if err := os.Rename(destination, retired); err != nil {
+			return "", fmt.Errorf("retire canonical skill: %w", err)
+		}
+		hadDestination = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if err := os.Rename(staged, destination); err != nil {
+		if hadDestination {
+			_ = os.Rename(retired, destination)
+		}
+		return "", fmt.Errorf("publish canonical skill: %w", err)
+	}
+	keepStaged = true
+	if hadDestination {
+		if err := os.RemoveAll(retired); err != nil {
+			return "", fmt.Errorf("remove retired canonical skill: %w", err)
+		}
+	}
+	return destination, nil
+}
+
+func copyCanonicalSkill(source, destination string) error {
+	return filepath.WalkDir(source, func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, name)
+		if err != nil {
+			return err
+		}
+		if relative == "." {
+			return nil
+		}
+		target := filepath.Join(destination, relative)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.Mkdir(target, 0o755)
+		}
+		mode := fs.FileMode(0o644)
+		if info.Mode()&0o111 != 0 {
+			mode = 0o755
+		}
+		input, err := os.Open(name)
+		if err != nil {
+			return err
+		}
+		output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if err != nil {
+			_ = input.Close()
+			return err
+		}
+		_, copyErr := io.Copy(output, input)
+		closeOutputErr := output.Close()
+		closeInputErr := input.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeOutputErr != nil {
+			return closeOutputErr
+		}
+		return closeInputErr
+	})
+}
+
 func Build(repo, ref, consumerName, cache string) (Result, error) {
 	root, err := repositoryRoot(repo)
 	if err != nil {
@@ -485,6 +609,14 @@ func validateCanonicalSkill(root string) error {
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("skill contains symlink: %s", name)
+		}
+		switch entry.Name() {
+		case ".git":
+			return fmt.Errorf("skill contains nested Git metadata: %s", name)
+		case ".DS_Store":
+			return fmt.Errorf("skill contains platform metadata: %s", name)
+		case ".env", ".env.local":
+			return fmt.Errorf("skill contains local environment file: %s", name)
 		}
 		if !entry.IsDir() && !info.Mode().IsRegular() {
 			return fmt.Errorf("skill contains unsupported file: %s", name)

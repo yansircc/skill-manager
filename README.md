@@ -61,6 +61,7 @@ go install .
 sm init ~/skills
 sm scan --repo ~/skills ~/code ~/.claude/skills
 sm adopt --repo ~/skills ~/some-project/my-skill
+sm publish --repo ~/skills --id my-generated-skill ./dist/skill
 git -C ~/skills add skills consumers
 git -C ~/skills commit -m 'Adopt my-skill'
 
@@ -74,6 +75,8 @@ sm exec --repo ~/skills claude.global -- "review this repository"
 ```
 
 `adopt` moves the source directory into the SSOT. It deliberately refuses cross-filesystem adoption instead of leaving two editable copies.
+
+`publish` copies a complete generator artifact into the SSOT worktree and replaces the whole previous package. The generator artifact remains outside the SSOT; the committed SSOT tree is still the only input to projections. Publishing rejects symlinks, nested Git metadata, local environment files, platform metadata, special files, and nested skill packages.
 
 `scan` is read-only. It recursively discovers candidate directories containing `SKILL.md`, excludes skills already inside the SSOT, and fails on duplicate IDs, catalog collisions, symlinks, special files, or nested `SKILL.md` packages. Discovery never grants canonical ownership; only `adopt` does.
 

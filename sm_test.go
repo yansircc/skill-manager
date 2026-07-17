@@ -9,6 +9,15 @@ import (
 	"testing"
 )
 
+func TestCurrentVersionPrefersInjectedVersion(t *testing.T) {
+	original := version
+	version = "v1.2.3"
+	t.Cleanup(func() { version = original })
+	if got := currentVersion(); got != "v1.2.3" {
+		t.Fatalf("currentVersion() = %q", got)
+	}
+}
+
 func TestBuildApplyVerifyUsesCommittedState(t *testing.T) {
 	repo := newTestRepository(t)
 	target := filepath.Join(t.TempDir(), "codex-skills")

@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose a change to the catalog, projection, or activation model
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the missing invariant or workflow, not only the desired UI.
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Proposed boundary
+      description: State which component should own the new fact and which components derive it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

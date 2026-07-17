@@ -1,93 +1,166 @@
 # sm
 
-`sm` 管理一个 Git-backed Agent skill SSOT，并为 Codex、Claude、Pi 等 consumer 编译不可变投影。
+[![CI](https://github.com/yansir/sm/actions/workflows/ci.yml/badge.svg)](https://github.com/yansir/sm/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/yansir/sm.svg)](https://pkg.go.dev/github.com/yansir/sm)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+`sm` is a local, Git-backed single source of truth for Agent Skills. It builds immutable, least-authority skill projections for Codex, Claude, Pi, and ordinary directories.
 
 ```text
-Producer repo ──produce──> external artifact
+Producer repository ──build──> external artifact
 external artifact ──publish──> ~/.sm/skills
-~/.sm Git commit ──build──> consumer generation
+committed Git tree ──build──> immutable generation ──activate──> Agent
 ```
 
-`~/.sm/skills` 是 consumer projection 的唯一输入。Producer 不能写入 SSOT，Agent 不能直接发现 Producer output。
+The editable truth lives in one place. Producer outputs cannot become Agent discovery roots, and consumers are built only from committed catalog state.
 
-## Dashboard
+## Why
 
-Dashboard 使用内嵌 Svelte 前端；所有数据和操作都来自 Go 领域层，不保存浏览器端影子状态。
+Agent tools discover skills through different directories and activation mechanisms. Copying skills into each tool creates multiple editable truths, stale copies, and unclear authorization.
+
+`sm` separates four concerns:
+
+- **Producer**: a trusted repository that builds one or more skill artifacts.
+- **Catalog**: canonical skills and ownership declarations in a Git repository.
+- **Consumer**: an explicit allowlist for one Agent environment.
+- **Generation**: an immutable projection derived from a catalog commit.
+
+## Requirements
+
+- Go 1.25 or newer
+- Git
+- Node.js 22.12 or newer and npm, only when rebuilding the Dashboard
+- Codex, Claude, or Pi only when using that Agent's adapter
+
+## Install
 
 ```sh
-sm open
-# opens http://127.0.0.1:7777
-
-sm dashboard
-# serves without opening a browser
+go install github.com/yansir/sm@latest
 ```
 
-Dashboard 支持：
+Or build from source:
 
-- 浏览 canonical skills、来源和 Agent 授权；
-- 在技能详情中切换 consumer grant；
-- 自动提交授权变化，并重建、应用和验证对应 projection；
-- 查看 Producer 扫描结果；
-- 原子更新一个 Producer 的全部 skills；
-- 添加显式声明 ownership 的 Producer。
+```sh
+git clone https://github.com/yansir/sm.git
+cd sm
+npm ci --prefix dashboard
+npm run build --prefix dashboard
+go build -o sm .
+```
 
-## SSOT
+The compiled binary embeds the Dashboard; Node.js is not required at runtime.
+
+## Quick start
+
+Create the catalog and its first commit:
+
+```sh
+sm init ~/.sm
+git -C ~/.sm add .gitignore
+git -C ~/.sm commit -m "Initialize skill registry"
+sm open --repo ~/.sm
+```
+
+`sm open` starts the Dashboard on `127.0.0.1:7777` and opens it in the default browser. Use `sm dashboard` to serve without opening a browser.
+
+The Dashboard can register Producers, publish updates, grant skills to consumers, show the exact build command, and rebuild affected projections. Every mutation is committed to the catalog repository.
+
+## Catalog layout
 
 ```text
 ~/.sm/
 ├── producers/
 │   └── example.json
 ├── skills/
+│   └── example/SKILL.md
 ├── consumers/
+│   └── codex.global.json
 └── .git/
 ```
 
-Producer 配置：
+Producer ownership is explicit:
 
 ```json
 {
-  "root": "/absolute/path/to/repo",
+  "root": "/absolute/path/to/producer",
   "build": { "argv": ["make", "skill"] },
-  "outputs": [{ "path": "dist/skills" }],
-  "skills": ["example-one", "example-two"]
+  "outputs": [{ "path": "dist/skill" }],
+  "skills": ["example"]
 }
 ```
 
-`skills` 是稳定 ownership 声明。实际产物集合必须与它完全一致；这使 artifact 被删除时仍能确定原 owner，并阻止 Producer 静默夺取直接维护的 skill。
+The build command runs with `root` as its working directory. Outputs must remain outside the catalog. The emitted `SKILL.md` name must match the declared skill ID.
 
-## Producer commands
+A consumer is an allowlist:
+
+```json
+{
+  "adapter": "codex",
+  "target": "~/.agents/skills",
+  "skills": ["example"]
+}
+```
+
+Supported adapters:
+
+| Adapter | Activation |
+| --- | --- |
+| `directory` | Persistent symlink to an immutable generation |
+| `codex` | Persistent target plus verified Codex discovery profile |
+| `claude` | Ephemeral, closed profile through `sm exec` |
+| `pi` | Ephemeral, closed invocation through `sm exec` |
+
+## Commands
 
 ```sh
+# Producers
 sm producers --repo ~/.sm
-sm scan --repo ~/.sm [producer...]
-sm produce --repo ~/.sm producer...
-sm publish --repo ~/.sm producer...
-sm update --repo ~/.sm producer...
+sm scan --repo ~/.sm --json
+sm produce --repo ~/.sm <producer>
+sm publish --repo ~/.sm <producer>
+sm update --repo ~/.sm <producer>
+
+# Consumers
+sm build --repo ~/.sm <consumer>
+sm apply --repo ~/.sm <consumer>
+sm verify --repo ~/.sm <consumer>
+sm exec --repo ~/.sm <consumer> -- <agent arguments...>
+
+# UI
+sm open --repo ~/.sm
+sm dashboard --repo ~/.sm --listen 127.0.0.1:7777
 ```
 
-- `scan` 只扫描已声明 outputs，不运行构建、不修改 catalog。
-- `produce` 只运行 Producer 的 argv，不读取或修改 catalog。
-- `publish` 先验证 Producer 的全部 artifacts，再原子替换 catalog。
-- `update` 严格组合 `produce → scan → publish`。
+`scan` is read-only. `produce` only runs the configured Producer command. `publish` validates the complete owned artifact set and atomically replaces it in the catalog. `update` composes `produce -> scan -> publish`.
 
-## Consumer commands
+`build`, `apply`, `verify`, and `exec` read a Git commit, not uncommitted working-tree state.
 
-```sh
-sm build --repo ~/.sm codex.global
-sm apply --repo ~/.sm codex.global
-sm verify --repo ~/.sm codex.global
-sm exec --repo ~/.sm claude.global -- "review this repository"
-```
+## Trust and security
 
-Build 只读取 Git commit。未提交的工作树变化不会进入 generation。
+`sm` is a local compiler and activator, not a remote package registry or sandbox.
+
+- Producer commands execute with the current user's privileges. Register only repositories you trust.
+- Skills may contain executable files. Review Producer changes before publishing them.
+- The Dashboard mutation API intentionally has no authentication and refuses non-loopback listen addresses. Do not expose it through a proxy or tunnel.
+- Consumer allowlists constrain skill projection; they do not sandbox the Agent process.
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## Development
 
 ```sh
-npm install --prefix dashboard
+npm ci --prefix dashboard
 npm run build --prefix dashboard
+test -z "$(gofmt -l .)"
+go vet ./...
 go test ./...
-go build .
+go build ./...
 ```
 
-Svelte build 产物位于 `dashboard/dist`，并嵌入 `sm` 二进制。
+Dashboard output under `dashboard/dist` is tracked because it is embedded by Go. A frontend change is complete only when source and embedded output are updated together.
+
+Contributions are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+
+## License
+
+MIT

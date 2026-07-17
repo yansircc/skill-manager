@@ -66,7 +66,7 @@ func probeCodexSkillsWithArgs(cwd string, configArgs []string) ([]CodexSkill, er
 			"id":     1,
 			"method": "initialize",
 			"params": map[string]any{
-				"clientInfo":   map[string]string{"name": "sm", "version": version},
+				"clientInfo":   map[string]string{"name": "sm", "version": currentVersion()},
 				"capabilities": map[string]bool{"experimentalApi": true},
 			},
 		},

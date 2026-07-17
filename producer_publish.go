@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
 )
 
 type PublishReport struct {
@@ -104,7 +103,7 @@ func lockRepository(root string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockFile(file); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
@@ -112,7 +111,7 @@ func lockRepository(root string) (*os.File, error) {
 }
 
 func unlockRepository(file *os.File) {
-	_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	_ = unlockFile(file)
 	_ = file.Close()
 }
 

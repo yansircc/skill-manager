@@ -7,9 +7,20 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 )
 
 var version = "dev"
+
+func currentVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return version
+}
 
 func main() {
 	if err := runCLI(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -198,7 +209,7 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 		}
 
 	case "version":
-		fmt.Fprintln(stdout, version)
+		fmt.Fprintln(stdout, currentVersion())
 		return nil
 	case "help", "-h", "--help":
 		printUsage(stdout)

@@ -63,6 +63,17 @@ func Init(location string) (string, error) {
 	if err := os.MkdirAll(filepath.Join(root, "consumers"), 0o755); err != nil {
 		return "", fmt.Errorf("create consumers directory: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "producers"), 0o755); err != nil {
+		return "", fmt.Errorf("create producers directory: %w", err)
+	}
+	ignore := filepath.Join(root, ".gitignore")
+	if _, err := os.Stat(ignore); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(ignore, []byte(".DS_Store\n.lock\n"), 0o644); err != nil {
+			return "", fmt.Errorf("create gitignore: %w", err)
+		}
+	} else if err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(filepath.Join(root, ".git")); errors.Is(err, os.ErrNotExist) {
 		if _, err := runGit(root, "init"); err != nil {
 			return "", err
@@ -71,125 +82,6 @@ func Init(location string) (string, error) {
 		return "", err
 	}
 	return root, nil
-}
-
-func Adopt(repo, source, id string) (string, error) {
-	root, err := repositoryRoot(repo)
-	if err != nil {
-		return "", err
-	}
-	source, err = filepath.Abs(source)
-	if err != nil {
-		return "", err
-	}
-	info, err := os.Stat(source)
-	if err != nil {
-		return "", fmt.Errorf("inspect source: %w", err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("source is not a directory: %s", source)
-	}
-	if id == "" {
-		id = filepath.Base(source)
-	}
-	if err := validateID(id); err != nil {
-		return "", err
-	}
-	if err := validateCanonicalSkill(source); err != nil {
-		return "", err
-	}
-	destination := filepath.Join(root, "skills", id)
-	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
-		if err == nil {
-			return "", fmt.Errorf("skill already exists: %s", id)
-		}
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.Rename(source, destination); err != nil {
-		return "", fmt.Errorf("move skill into SSOT: %w; adopt requires source and SSOT on the same filesystem", err)
-	}
-	return destination, nil
-}
-
-// Publish copies a complete generator artifact into the SSOT worktree. HEAD
-// remains the published state until the caller commits the resulting change.
-func Publish(repo, source, id string) (string, error) {
-	root, err := repositoryRoot(repo)
-	if err != nil {
-		return "", err
-	}
-	source, err = filepath.Abs(source)
-	if err != nil {
-		return "", err
-	}
-	info, err := os.Stat(source)
-	if err != nil {
-		return "", fmt.Errorf("inspect source: %w", err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("source is not a directory: %s", source)
-	}
-	if id == "" {
-		id = filepath.Base(source)
-	}
-	if err := validateID(id); err != nil {
-		return "", err
-	}
-	if err := validateCanonicalSkill(source); err != nil {
-		return "", err
-	}
-
-	destination := filepath.Join(root, "skills", id)
-	if within(destination, source) {
-		return "", fmt.Errorf("publish source must be outside canonical destination: %s", destination)
-	}
-	parent := filepath.Dir(destination)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return "", err
-	}
-	staged, err := os.MkdirTemp(parent, ".sm-publish-")
-	if err != nil {
-		return "", err
-	}
-	keepStaged := false
-	defer func() {
-		if !keepStaged {
-			_ = os.RemoveAll(staged)
-		}
-	}()
-	if err := copyCanonicalSkill(source, staged); err != nil {
-		return "", fmt.Errorf("stage skill: %w", err)
-	}
-	if err := validateCanonicalSkill(staged); err != nil {
-		return "", fmt.Errorf("staged skill is invalid: %w", err)
-	}
-
-	retired := staged + ".retired"
-	hadDestination := false
-	if _, err := os.Lstat(destination); err == nil {
-		if err := os.Rename(destination, retired); err != nil {
-			return "", fmt.Errorf("retire canonical skill: %w", err)
-		}
-		hadDestination = true
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	if err := os.Rename(staged, destination); err != nil {
-		if hadDestination {
-			_ = os.Rename(retired, destination)
-		}
-		return "", fmt.Errorf("publish canonical skill: %w", err)
-	}
-	keepStaged = true
-	if hadDestination {
-		if err := os.RemoveAll(retired); err != nil {
-			return "", fmt.Errorf("remove retired canonical skill: %w", err)
-		}
-	}
-	return destination, nil
 }
 
 func copyCanonicalSkill(source, destination string) error {

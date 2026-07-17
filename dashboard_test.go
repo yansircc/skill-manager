@@ -1,0 +1,88 @@
+package main
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestDashboardStateAndGrantUseSSOT(t *testing.T) {
+	repo := newTestRepository(t)
+	if _, err := runGit(repo, "config", "user.name", "sm-test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(repo, "config", "user.email", "sm-test@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	writeNamedSkill(t, filepath.Join(repo, "skills", "alpha"), "alpha", "Alpha skill")
+	writeConsumer(t, repo, "pi.global", Consumer{Adapter: "pi", Skills: []string{}})
+	commitAll(t, repo, "initial")
+
+	state, err := dashboardState(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Skills) != 1 || state.Skills[0].Description != "Alpha skill" {
+		t.Fatalf("state = %#v", state)
+	}
+	if err := setGrant(repo, "alpha", grantRequest{Consumer: "pi.global", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	consumers, err := readConsumers(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consumers["pi.global"].Skills) != 1 || consumers["pi.global"].Skills[0] != "alpha" {
+		t.Fatalf("consumer = %#v", consumers["pi.global"])
+	}
+	status, err := runGit(repo, "status", "--porcelain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "" {
+		t.Fatalf("dashboard left dirty SSOT: %s", status)
+	}
+}
+
+func TestProducerPublishIsAtomicForOwnedSkillSet(t *testing.T) {
+	repo := newTestRepository(t)
+	producerRoot := t.TempDir()
+	writeNamedSkill(t, filepath.Join(producerRoot, "dist", "one"), "one", "new one")
+	writeNamedSkill(t, filepath.Join(producerRoot, "dist", "two"), "two", "new two")
+	producer := struct {
+		Root    string           `json:"root"`
+		Build   ProducerBuild    `json:"build"`
+		Outputs []ProducerOutput `json:"outputs"`
+		Skills  []string         `json:"skills"`
+	}{producerRoot, ProducerBuild{Argv: []string{"true"}}, []ProducerOutput{{Path: "dist"}}, []string{"one", "two"}}
+	data, _ := json.MarshalIndent(producer, "", "  ")
+	writeFile(t, filepath.Join(repo, "producers", "example.json"), string(data))
+	if _, err := PublishProducers(repo, []string{"example"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "skills", "one", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "skills", "two", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, filepath.Join(producerRoot, "dist", "two", ".env.local"), "secret")
+	writeNamedSkill(t, filepath.Join(producerRoot, "dist", "one"), "one", "changed one")
+	if _, err := PublishProducers(repo, []string{"example"}); err == nil {
+		t.Fatal("invalid producer publish succeeded")
+	}
+	metadata, err := readSkillMetadata(filepath.Join(repo, "skills", "one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Description != "new one" {
+		t.Fatalf("partial update escaped transaction: %q", metadata.Description)
+	}
+}
+
+func writeNamedSkill(t *testing.T, root, id, description string) {
+	t.Helper()
+	writeFile(t, filepath.Join(root, "SKILL.md"), "---\nname: "+id+"\ndescription: "+description+"\n---\n")
+}

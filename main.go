@@ -32,6 +32,44 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch args[0] {
+	case "dashboard":
+		fs := newFlagSet("dashboard", stderr)
+		repo := fs.String("repo", "~/.sm", "SSOT repository")
+		listen := fs.String("listen", "127.0.0.1:7777", "dashboard listen address")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return fmt.Errorf("usage: sm dashboard [--repo path] [--listen address]")
+		}
+		root, err := expandHome(*repo)
+		if err != nil {
+			return err
+		}
+		return RunDashboard(root, *listen)
+	case "producers":
+		fs := newFlagSet("producers", stderr)
+		repo := fs.String("repo", ".", "SSOT repository")
+		asJSON := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return fmt.Errorf("usage: sm producers [--repo path] [--json]")
+		}
+		producers, err := loadProducers(*repo)
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			encoder := json.NewEncoder(stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(producers)
+		}
+		for _, producer := range producers {
+			fmt.Fprintf(stdout, "%s\t%s\t%d skills\n", producer.ID, producer.Root, len(producer.Skills))
+		}
+		return nil
 	case "scan":
 		fs := newFlagSet("scan", stderr)
 		repo := fs.String("repo", ".", "SSOT repository")
@@ -39,20 +77,23 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		if fs.NArg() == 0 {
-			return fmt.Errorf("scan requires at least one discovery root")
-		}
-		candidates, err := Scan(*repo, fs.Args())
+		report, err := ScanProducers(*repo, fs.Args())
 		if err != nil {
 			return err
 		}
 		if *asJSON {
 			encoder := json.NewEncoder(stdout)
 			encoder.SetIndent("", "  ")
-			return encoder.Encode(candidates)
+			return encoder.Encode(report)
 		}
-		for _, candidate := range candidates {
-			fmt.Fprintf(stdout, "%s\t%s\n", candidate.ID, candidate.Path)
+		for _, producer := range report.Producers {
+			if producer.Error != "" {
+				fmt.Fprintf(stdout, "%s\terror\t%s\n", producer.Producer.ID, producer.Error)
+				continue
+			}
+			for _, artifact := range producer.Artifacts {
+				fmt.Fprintf(stdout, "%s\t%s\t%s\n", producer.Producer.ID, artifact.SkillID, artifact.State)
+			}
 		}
 		return nil
 
@@ -75,38 +116,37 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, root)
 		return nil
 
-	case "adopt":
-		fs := newFlagSet("adopt", stderr)
+	case "produce", "publish", "update":
+		fs := newFlagSet(args[0], stderr)
 		repo := fs.String("repo", ".", "SSOT repository")
-		id := fs.String("id", "", "stable skill id; defaults to source directory name")
+		asJSON := fs.Bool("json", false, "emit JSON")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		if fs.NArg() != 1 {
-			return fmt.Errorf("usage: sm adopt [--repo path] [--id id] source")
+		if fs.NArg() == 0 {
+			return fmt.Errorf("%s requires at least one producer", args[0])
 		}
-		destination, err := Adopt(*repo, fs.Arg(0), *id)
+		if args[0] == "produce" {
+			return Produce(*repo, fs.Args(), stdout, stderr)
+		}
+		var report PublishReport
+		var err error
+		if args[0] == "publish" {
+			report, err = PublishProducers(*repo, fs.Args())
+		} else {
+			report, err = UpdateProducers(*repo, fs.Args(), stdout, stderr)
+		}
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(stdout, destination)
-		return nil
-
-	case "publish":
-		fs := newFlagSet("publish", stderr)
-		repo := fs.String("repo", ".", "SSOT repository")
-		id := fs.String("id", "", "stable skill id; defaults to source directory name")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
+		if *asJSON {
+			encoder := json.NewEncoder(stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(report)
 		}
-		if fs.NArg() != 1 {
-			return fmt.Errorf("usage: sm publish [--repo path] [--id id] source")
+		for _, producer := range report.Producers {
+			fmt.Fprintf(stdout, "%s\tpublished\n", producer.Producer.ID)
 		}
-		destination, err := Publish(*repo, fs.Arg(0), *id)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintln(stdout, destination)
 		return nil
 
 	case "build", "apply", "verify", "exec":
@@ -175,10 +215,13 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `sm compiles an immutable Agent skill projection from a Git SSOT.
 
 Usage:
-  sm scan [--repo path] [--json] root...
+  sm dashboard [--repo path] [--listen address]
+  sm producers [--repo path] [--json]
+  sm scan [--repo path] [--json] [producer...]
+  sm produce [--repo path] producer...
+  sm publish [--repo path] [--json] producer...
+  sm update [--repo path] [--json] producer...
   sm init [path]
-  sm adopt [--repo path] [--id id] source
-  sm publish [--repo path] [--id id] source
   sm build [--repo path] [--ref commit] consumer
   sm apply [--repo path] [--ref commit] consumer
   sm verify [--repo path] [--ref commit] consumer

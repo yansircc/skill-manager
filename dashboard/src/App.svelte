@@ -69,7 +69,11 @@
 
   async function updateProducer(id) {
     working = `正在更新 ${id}…`
-    try { state = await api(`/api/producers/${encodeURIComponent(id)}/update`, { method: 'POST' }); showToast(`${id} 已更新`) }
+    try {
+      state = await api(`/api/producers/${encodeURIComponent(id)}/update`, { method: 'POST' })
+      if (selected) selected = state.skills.find(skill => skill.id === selected.id) || null
+      showToast(`${id} 已更新`)
+    }
     catch (cause) { error = cause.message; await refresh() }
     finally { working = '' }
   }
@@ -112,14 +116,14 @@
         <div class="page-head"><div><h1>我的技能</h1><p class="subtitle">管理技能来源，并决定每个 Agent 可以使用哪些技能。</p></div><button class="btn primary" on:click={() => addSource = true}>＋ 添加来源</button></div>
         <div class="summary"><div class="stat"><b>{state.skills.length}</b><span>个技能</span></div><div class="stat"><b>{usedCount}</b><span>正在使用</span></div><div class="stat"><b>{state.skills.length - usedCount}</b><span>暂未使用</span></div></div>
         <div class="toolbar"><label class="search"><span>⌕</span><input bind:value={query} placeholder="搜索技能"></label><button class:active={filter === 'all'} on:click={() => filter = 'all'}>全部</button><button class:active={filter === 'used'} on:click={() => filter = 'used'}>正在使用</button><button class:active={filter === 'unused'} on:click={() => filter = 'unused'}>暂未使用</button></div>
-        <div class="matrix"><div class="matrix-head"><div>技能</div><div>使用状态</div><div>版本</div><div></div></div>
+        <div class="matrix"><div class="matrix-head"><div>技能</div><div>使用状态</div><div></div><div></div></div>
           {#each skillGroups as group (group.id)}
-            {#if !group.producer || group.producer.skillCount > 1}<div class="group-head"><div><strong>{group.id || '直接维护'}</strong><span>{group.skills.length} 个技能{group.producer ? ` · ${group.producer.statusLabel}` : ''}</span></div>{#if group.producer}<button class="btn" on:click={() => updateProducer(group.id)}>{group.producer.status === 'updated' ? '更新全部' : '重新生成'}</button>{/if}</div>{/if}
+            {#if !group.producer || group.producer.skillCount > 1}<div class="group-head"><div><strong>{group.id || '直接维护'}</strong><span>{group.skills.length} 个技能{group.producer ? ` · ${group.producer.statusLabel}` : ''}</span></div></div>{/if}
             {#each group.skills as skill (skill.id)}
               <div class="skill" role="button" tabindex="0" on:click={() => openSkill(skill)} on:keydown={(event) => event.key === 'Enter' && openSkill(skill)}>
                 <div><strong>{skill.id}</strong><small>{skill.description}</small></div>
                 <div class="usage">{#if skill.agents.length}{#each skill.agents as agent}<span>{agentLabel[agent] || agent}</span>{/each}{:else}<small>暂未使用</small>{/if}</div>
-                <div>{#if skill.update === 'updated'}<button class="row-update available" title="更新来源" on:click|stopPropagation={() => updateProducer(skill.producer)}>↻ 可更新</button>{:else if skill.update === 'error'}<span class="bad">有问题</span>{:else if group.producer && group.producer.skillCount === 1}<span class="version-current">最新</span><button class="row-update icon" title="重新生成" aria-label="重新生成" on:click|stopPropagation={() => updateProducer(skill.producer)}>↻</button>{:else}<small>最新</small>{/if}</div><div class="arrow">›</div>
+                <div class="list-indicator">{#if skill.update === 'updated'}<span class="update-indicator">可更新</span>{:else if skill.update === 'error'}<span class="bad">有问题</span>{/if}</div><div class="arrow">›</div>
               </div>
             {/each}
           {:else}<div class="empty">没有符合条件的技能</div>{/each}
@@ -138,7 +142,7 @@
   <aside class="drawer">
     <div class="drawer-head"><div class="drawer-top"><span>技能详情</span><button class="close" on:click={closeDrawer}>×</button></div><h2>{selected.id}</h2><p>{selected.description}</p></div>
     <div class="drawer-body"><div class="section-label">可在哪些 Agent 中使用</div><div class="access-list">{#each state.agents as agent}<div class="access"><div class="mini-icon">{agent.short}</div><div><strong>{agent.name}</strong><small>全局环境</small></div><button class:on={selected.agents.includes(agent.id)} class="toggle" on:click={() => toggleGrant(selected, agent.id)} aria-label={`切换 ${agent.name}`}></button></div>{/each}</div>
-      <div class="section-label">技能来源</div><div class="source-card"><strong>{selected.producer || '直接维护'}</strong><span>{selected.producer ? '由此来源生成并负责后续更新' : '直接在技能库中维护'}</span></div>
+      <div class="section-label">技能来源</div><div class="source-card"><div><strong>{selected.producer || '直接维护'}</strong><span>{selected.producer ? '由此来源生成并负责后续更新' : '直接在技能库中维护'}</span></div>{#if selected.producer && selected.update === 'updated'}<button class="btn source-update" disabled={!!working} on:click={() => updateProducer(selected.producer)}>更新</button>{/if}</div>
       <div class="section-label">技能库位置</div><div class="path-card">{state.repo}/skills/{selected.id}</div>
     </div><div class="drawer-foot"><span>修改后会自动同步</span></div>
   </aside>

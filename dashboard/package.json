@@ -10,5 +10,8 @@
     "@sveltejs/vite-plugin-svelte": "latest",
     "svelte": "latest",
     "vite": "latest"
+  },
+  "dependencies": {
+    "@tanstack/table-core": "8.21.3"
   }
 }

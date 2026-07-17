@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,11 +27,12 @@ type DashboardSkill struct {
 }
 
 type DashboardProducer struct {
-	ID          string `json:"id"`
-	Root        string `json:"root"`
-	SkillCount  int    `json:"skillCount"`
-	Status      string `json:"status"`
-	StatusLabel string `json:"statusLabel"`
+	ID          string   `json:"id"`
+	Root        string   `json:"root"`
+	BuildArgv   []string `json:"buildArgv"`
+	SkillCount  int      `json:"skillCount"`
+	Status      string   `json:"status"`
+	StatusLabel string   `json:"statusLabel"`
 }
 
 type DashboardAgent struct {
@@ -129,8 +131,9 @@ func dashboardServesRepo(url, repo string) bool {
 }
 
 type dashboardServer struct {
-	repo   string
-	assets http.Handler
+	repo     string
+	assets   http.Handler
+	mutation sync.RWMutex
 }
 
 func (server *dashboardServer) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -147,6 +150,13 @@ func (server *dashboardServer) ServeHTTP(writer http.ResponseWriter, request *ht
 }
 
 func (server *dashboardServer) serveAPI(writer http.ResponseWriter, request *http.Request) {
+	if request.Method == http.MethodGet {
+		server.mutation.RLock()
+		defer server.mutation.RUnlock()
+	} else {
+		server.mutation.Lock()
+		defer server.mutation.Unlock()
+	}
 	writer.Header().Set("Content-Type", "application/json")
 	var result any
 	var err error
@@ -284,7 +294,7 @@ func dashboardState(repo string) (DashboardState, error) {
 				status, label = "error", "产物有问题"
 			}
 		}
-		state.Producers = append(state.Producers, DashboardProducer{ID: producer.ID, Root: producer.Root, SkillCount: len(producer.Skills), Status: status, StatusLabel: label})
+		state.Producers = append(state.Producers, DashboardProducer{ID: producer.ID, Root: producer.Root, BuildArgv: append([]string(nil), producer.Build.Argv...), SkillCount: len(producer.Skills), Status: status, StatusLabel: label})
 	}
 	for id, consumer := range consumers {
 		name, short := agentIdentity(consumer.Adapter)

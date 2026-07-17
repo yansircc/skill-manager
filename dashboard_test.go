@@ -31,6 +31,16 @@ func TestDashboardStateAndGrantUseSSOT(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeNamedSkill(t, filepath.Join(repo, "skills", "alpha"), "alpha", "Alpha skill")
+	producerRoot := t.TempDir()
+	writeNamedSkill(t, filepath.Join(producerRoot, "dist", "alpha"), "alpha", "Alpha skill")
+	producer := struct {
+		Root    string           `json:"root"`
+		Build   ProducerBuild    `json:"build"`
+		Outputs []ProducerOutput `json:"outputs"`
+		Skills  []string         `json:"skills"`
+	}{producerRoot, ProducerBuild{Argv: []string{"make", "skill"}}, []ProducerOutput{{Path: "dist"}}, []string{"alpha"}}
+	data, _ := json.Marshal(producer)
+	writeFile(t, filepath.Join(repo, "producers", "example.json"), string(data))
 	writeConsumer(t, repo, "pi.global", Consumer{Adapter: "pi", Skills: []string{}})
 	commitAll(t, repo, "initial")
 
@@ -40,6 +50,9 @@ func TestDashboardStateAndGrantUseSSOT(t *testing.T) {
 	}
 	if len(state.Skills) != 1 || state.Skills[0].Description != "Alpha skill" {
 		t.Fatalf("state = %#v", state)
+	}
+	if len(state.Producers) != 1 || len(state.Producers[0].BuildArgv) != 2 || state.Producers[0].BuildArgv[0] != "make" || state.Producers[0].BuildArgv[1] != "skill" {
+		t.Fatalf("producer command = %#v", state.Producers)
 	}
 	if err := setGrant(repo, "alpha", grantRequest{Consumer: "pi.global", Enabled: true}); err != nil {
 		t.Fatal(err)

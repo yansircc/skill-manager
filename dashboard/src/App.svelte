@@ -5,7 +5,8 @@
   let state = { skills: [], producers: [], agents: [], repo: '', head: '', dirty: false }
   let page = 'skills'
   let query = ''
-  let filter = 'all'
+  let updateFilter = 'all'
+  let usageFilter = 'all'
   let pageIndex = 0
   let pageSize = 30
   let selected = null
@@ -21,16 +22,23 @@
   const agentLabel = { 'codex.global': 'Codex', 'claude.global': 'Claude', 'pi.global': 'Pi' }
   const pageSizes = [15, 30, 50, 100]
   const pageSizeKey = 'sm.dashboard.pageSize'
+  const updateFilterLabel = { updated: '有更新', current: '已是最新', error: '有问题' }
+  const usageFilterLabel = { 'claude.global': 'Claude 在用', 'codex.global': 'Codex 在用', 'pi.global': 'Pi 在用', unused: '未使用' }
   const columns = [
     { accessorKey: 'id' },
     { accessorKey: 'description' },
     {
-      id: 'scope',
-      accessorFn: skill => skill,
+      id: 'updateScope',
+      accessorFn: skill => skill.update,
+      enableGlobalFilter: false,
+      filterFn: (row, _column, value) => row.original.update === value
+    },
+    {
+      id: 'usageScope',
+      accessorFn: skill => skill.agents,
       enableGlobalFilter: false,
       filterFn: (row, _column, value) => {
         const skill = row.original
-        if (value === 'updated') return skill.update === 'updated'
         if (value === 'unused') return skill.agents.length === 0
         return skill.agents.includes(value)
       }
@@ -42,7 +50,10 @@
     columns,
     state: {
       globalFilter: query,
-      columnFilters: filter === 'all' ? [] : [{ id: 'scope', value: filter }],
+      columnFilters: [
+        ...(updateFilter === 'all' ? [] : [{ id: 'updateScope', value: updateFilter }]),
+        ...(usageFilter === 'all' ? [] : [{ id: 'usageScope', value: usageFilter }])
+      ],
       pagination: { pageIndex, pageSize }
     },
     onStateChange: () => {},
@@ -132,7 +143,9 @@
 
   function showToast(message) { toast = message; setTimeout(() => toast === message && (toast = ''), 1800) }
   function shellWord(word) { return /^[A-Za-z0-9_./:@%+=,-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'` }
-  function chooseFilter(value) { filter = value; pageIndex = 0 }
+  function changeUpdateFilter(event) { updateFilter = event.currentTarget.value; pageIndex = 0 }
+  function changeUsageFilter(event) { usageFilter = event.currentTarget.value; pageIndex = 0 }
+  function clearFilters() { updateFilter = 'all'; usageFilter = 'all'; pageIndex = 0 }
   function updateQuery(event) { query = event.currentTarget.value; pageIndex = 0 }
   function changePageSize(event) {
     pageSize = Number(event.currentTarget.value)
@@ -171,7 +184,8 @@
       <section class="page">
         <div class="page-head"><div><h1>我的技能</h1><p class="subtitle">管理技能来源，并决定每个 Agent 可以使用哪些技能。</p></div><button class="btn primary" on:click={() => addSource = true}>＋ 添加来源</button></div>
         <div class="summary"><div class="stat"><b>{state.skills.length}</b><span>个技能</span></div><div class="stat"><b>{usedCount}</b><span>正在使用</span></div><div class="stat"><b>{state.skills.length - usedCount}</b><span>暂未使用</span></div></div>
-        <div class="toolbar"><label class="search"><span>⌕</span><input value={query} on:input={updateQuery} placeholder="搜索技能"></label><button class:active={filter === 'all'} on:click={() => chooseFilter('all')}>所有</button><button class:active={filter === 'updated'} on:click={() => chooseFilter('updated')}>有更新</button><button class:active={filter === 'claude.global'} on:click={() => chooseFilter('claude.global')}>Claude 在用</button><button class:active={filter === 'codex.global'} on:click={() => chooseFilter('codex.global')}>Codex 在用</button><button class:active={filter === 'pi.global'} on:click={() => chooseFilter('pi.global')}>Pi 在用</button><button class:active={filter === 'unused'} on:click={() => chooseFilter('unused')}>未使用</button></div>
+        <div class="toolbar"><label class="search"><span>⌕</span><input value={query} on:input={updateQuery} placeholder="搜索技能"></label><label class="filter-select"><span>更新状态</span><select value={updateFilter} on:change={changeUpdateFilter}><option value="all">全部</option><option value="updated">有更新</option><option value="current">已是最新</option><option value="error">有问题</option></select></label><label class="filter-select"><span>使用范围</span><select value={usageFilter} on:change={changeUsageFilter}><option value="all">全部</option><option value="claude.global">Claude 在用</option><option value="codex.global">Codex 在用</option><option value="pi.global">Pi 在用</option><option value="unused">未使用</option></select></label>{#if updateFilter !== 'all' || usageFilter !== 'all'}<button class="clear-filters" on:click={clearFilters}>清除筛选</button>{/if}</div>
+        {#if updateFilter !== 'all' || usageFilter !== 'all'}<div class="filter-chips">{#if updateFilter !== 'all'}<button on:click={() => { updateFilter = 'all'; pageIndex = 0 }}>{updateFilterLabel[updateFilter]} <span>×</span></button>{/if}{#if usageFilter !== 'all'}<button on:click={() => { usageFilter = 'all'; pageIndex = 0 }}>{usageFilterLabel[usageFilter]} <span>×</span></button>{/if}<small>共 {filteredCount} 个技能</small></div>{/if}
         <div class="matrix"><div class="matrix-head"><div>技能</div><div>使用状态</div><div></div></div>
           {#each skillGroups as group (group.id)}
             {#if !group.producer || group.producer.skillCount > 1}<div class="group-head"><div><strong>{group.id || '直接维护'}</strong><span>{group.skills.length} 个技能{group.producer ? ` · ${group.producer.statusLabel}` : ''}</span></div></div>{/if}

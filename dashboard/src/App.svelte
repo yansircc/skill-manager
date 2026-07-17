@@ -116,14 +116,14 @@
         <div class="page-head"><div><h1>我的技能</h1><p class="subtitle">管理技能来源，并决定每个 Agent 可以使用哪些技能。</p></div><button class="btn primary" on:click={() => addSource = true}>＋ 添加来源</button></div>
         <div class="summary"><div class="stat"><b>{state.skills.length}</b><span>个技能</span></div><div class="stat"><b>{usedCount}</b><span>正在使用</span></div><div class="stat"><b>{state.skills.length - usedCount}</b><span>暂未使用</span></div></div>
         <div class="toolbar"><label class="search"><span>⌕</span><input bind:value={query} placeholder="搜索技能"></label><button class:active={filter === 'all'} on:click={() => filter = 'all'}>全部</button><button class:active={filter === 'used'} on:click={() => filter = 'used'}>正在使用</button><button class:active={filter === 'unused'} on:click={() => filter = 'unused'}>暂未使用</button></div>
-        <div class="matrix"><div class="matrix-head"><div>技能</div><div>使用状态</div><div></div><div></div></div>
+        <div class="matrix"><div class="matrix-head"><div>技能</div><div>使用状态</div><div></div></div>
           {#each skillGroups as group (group.id)}
             {#if !group.producer || group.producer.skillCount > 1}<div class="group-head"><div><strong>{group.id || '直接维护'}</strong><span>{group.skills.length} 个技能{group.producer ? ` · ${group.producer.statusLabel}` : ''}</span></div></div>{/if}
             {#each group.skills as skill (skill.id)}
               <div class="skill" role="button" tabindex="0" on:click={() => openSkill(skill)} on:keydown={(event) => event.key === 'Enter' && openSkill(skill)}>
-                <div><strong>{skill.id}</strong><small>{skill.description}</small></div>
+                <div><div class="skill-title"><strong>{skill.id}</strong>{#if skill.update === 'updated'}<span class="update-indicator">可更新</span>{:else if skill.update === 'error'}<span class="bad">有问题</span>{/if}</div><small>{skill.description}</small></div>
                 <div class="usage">{#if skill.agents.length}{#each skill.agents as agent}<span>{agentLabel[agent] || agent}</span>{/each}{:else}<small>暂未使用</small>{/if}</div>
-                <div class="list-indicator">{#if skill.update === 'updated'}<span class="update-indicator">可更新</span>{:else if skill.update === 'error'}<span class="bad">有问题</span>{/if}</div><div class="arrow">›</div>
+                <div class="arrow">›</div>
               </div>
             {/each}
           {:else}<div class="empty">没有符合条件的技能</div>{/each}

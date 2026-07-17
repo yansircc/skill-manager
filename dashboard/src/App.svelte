@@ -13,7 +13,7 @@
   let addSource = false
   let sourceForm = { id: '', root: '', build: 'make skill', output: 'dist/skills' }
 
-  const pageNames = { skills: '我的技能', sources: '技能来源', agents: 'Agent', activity: '最近动态' }
+  const pageNames = { skills: '我的技能', agents: 'Agent', activity: '最近动态' }
   const agentLabel = { 'codex.global': 'Codex', 'claude.global': 'Claude', 'pi.global': 'Pi' }
 
   $: visibleSkills = state.skills.filter(skill => {
@@ -21,6 +21,20 @@
     const used = skill.agents.length > 0
     return matches && (filter === 'all' || filter === 'used' && used || filter === 'unused' && !used)
   })
+  $: skillGroups = (() => {
+    const producers = new Map(state.producers.map(producer => [producer.id, producer]))
+    const groups = new Map()
+    for (const skill of visibleSkills) {
+      const key = skill.producer || ''
+      if (!groups.has(key)) groups.set(key, { id: key, producer: producers.get(key), skills: [] })
+      groups.get(key).skills.push(skill)
+    }
+    return [...groups.values()].sort((left, right) => {
+      if (!left.id) return 1
+      if (!right.id) return -1
+      return left.id.localeCompare(right.id)
+    })
+  })()
   $: usedCount = state.skills.filter(skill => skill.agents.length).length
 
   async function api(path, options) {
@@ -83,7 +97,6 @@
     <div class="nav-label">管理</div>
     <nav class="nav">
       <button class:active={page === 'skills'} on:click={() => page = 'skills'}><span class="nav-icon">▦</span><span>我的技能</span><em>{state.skills.length}</em></button>
-      <button class:active={page === 'sources'} on:click={() => page = 'sources'}><span class="nav-icon">▣</span><span>技能来源</span><em>{state.producers.length}</em></button>
       <button class:active={page === 'agents'} on:click={() => page = 'agents'}><span class="nav-icon">♙</span><span>Agent</span><em>{state.agents.length}</em></button>
       <button class:active={page === 'activity'} on:click={() => page = 'activity'}><span class="nav-icon">⌁</span><span>最近动态</span></button>
     </nav>
@@ -96,25 +109,21 @@
 
     {#if page === 'skills'}
       <section class="page">
-        <div class="page-head"><div><h1>我的技能</h1><p class="subtitle">决定每个 Agent 可以使用哪些技能。</p></div></div>
+        <div class="page-head"><div><h1>我的技能</h1><p class="subtitle">管理技能来源，并决定每个 Agent 可以使用哪些技能。</p></div><button class="btn primary" on:click={() => addSource = true}>＋ 添加来源</button></div>
         <div class="summary"><div class="stat"><b>{state.skills.length}</b><span>个技能</span></div><div class="stat"><b>{usedCount}</b><span>正在使用</span></div><div class="stat"><b>{state.skills.length - usedCount}</b><span>暂未使用</span></div></div>
         <div class="toolbar"><label class="search"><span>⌕</span><input bind:value={query} placeholder="搜索技能"></label><button class:active={filter === 'all'} on:click={() => filter = 'all'}>全部</button><button class:active={filter === 'used'} on:click={() => filter = 'used'}>正在使用</button><button class:active={filter === 'unused'} on:click={() => filter = 'unused'}>暂未使用</button></div>
-        <div class="matrix"><div class="matrix-head"><div>技能</div><div>来源</div><div>使用状态</div><div>版本</div><div></div></div>
-          {#each visibleSkills as skill (skill.id)}
-            <div class="skill" role="button" tabindex="0" on:click={() => openSkill(skill)} on:keydown={(event) => event.key === 'Enter' && openSkill(skill)}>
-              <div><strong>{skill.id}</strong><small>{skill.description}</small></div>
-              <div class:direct={!skill.producer}>{skill.producer || '直接维护'}</div>
-              <div class="usage">{#if skill.agents.length}{#each skill.agents as agent}<span>{agentLabel[agent] || agent}</span>{/each}{:else}<small>暂未使用</small>{/if}</div>
-              <div>{#if skill.update === 'updated'}<button class="update" on:click|stopPropagation={() => updateProducer(skill.producer)}>↻ 可更新</button>{:else if skill.update === 'error'}<span class="bad">有问题</span>{:else}<small>最新</small>{/if}</div><div class="arrow">›</div>
-            </div>
+        <div class="matrix"><div class="matrix-head"><div>技能</div><div>使用状态</div><div>版本</div><div></div></div>
+          {#each skillGroups as group (group.id)}
+            {#if !group.producer || group.producer.skillCount > 1}<div class="group-head"><div><strong>{group.id || '直接维护'}</strong><span>{group.skills.length} 个技能{group.producer ? ` · ${group.producer.statusLabel}` : ''}</span></div>{#if group.producer}<button class="btn" on:click={() => updateProducer(group.id)}>{group.producer.status === 'updated' ? '更新全部' : '重新生成'}</button>{/if}</div>{/if}
+            {#each group.skills as skill (skill.id)}
+              <div class="skill" role="button" tabindex="0" on:click={() => openSkill(skill)} on:keydown={(event) => event.key === 'Enter' && openSkill(skill)}>
+                <div><strong>{skill.id}</strong><small>{skill.description}</small></div>
+                <div class="usage">{#if skill.agents.length}{#each skill.agents as agent}<span>{agentLabel[agent] || agent}</span>{/each}{:else}<small>暂未使用</small>{/if}</div>
+                <div>{#if skill.update === 'updated'}<button class="row-update available" title="更新来源" on:click|stopPropagation={() => updateProducer(skill.producer)}>↻ 可更新</button>{:else if skill.update === 'error'}<span class="bad">有问题</span>{:else if group.producer && group.producer.skillCount === 1}<span class="version-current">最新</span><button class="row-update icon" title="重新生成" aria-label="重新生成" on:click|stopPropagation={() => updateProducer(skill.producer)}>↻</button>{:else}<small>最新</small>{/if}</div><div class="arrow">›</div>
+              </div>
+            {/each}
           {:else}<div class="empty">没有符合条件的技能</div>{/each}
         </div>
-      </section>
-    {:else if page === 'sources'}
-      <section class="page"><div class="page-head"><div><h1>技能来源</h1><p class="subtitle">管理负责生成技能的项目；一个来源可以提供多个技能。</p></div><button class="btn primary" on:click={() => addSource = true}>＋ 添加来源</button></div>
-        <div class="producer-list">{#each state.producers as producer}
-          <div class="producer-row"><div><strong>{producer.id}</strong><code>{producer.root}</code></div><div>{producer.skillCount} 个技能</div><div class:update={producer.status === 'updated'} class:bad={producer.status === 'error'}>{producer.statusLabel}</div><button class="btn" on:click={() => updateProducer(producer.id)}>{producer.status === 'updated' ? '更新' : '重新生成'}</button></div>
-        {:else}<div class="empty">还没有技能来源</div>{/each}</div>
       </section>
     {:else if page === 'agents'}
       <section class="page"><h1>Agent</h1><p class="subtitle">查看每个 Agent 当前能使用的技能。</p><div class="agent-grid">{#each state.agents as agent}<div class="agent-card"><div class="agent-icon">{agent.short}</div><h3>{agent.name}</h3><p>全局环境</p><div class="agent-count">{agent.skillCount}<span>个技能</span></div><div class:bad={!agent.synced} class="agent-status">● {agent.synced ? '已同步' : '需要同步'}</div></div>{/each}</div></section>

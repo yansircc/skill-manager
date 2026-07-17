@@ -32,19 +32,22 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch args[0] {
-	case "dashboard":
-		fs := newFlagSet("dashboard", stderr)
+	case "dashboard", "open":
+		fs := newFlagSet(args[0], stderr)
 		repo := fs.String("repo", "~/.sm", "SSOT repository")
 		listen := fs.String("listen", "127.0.0.1:7777", "dashboard listen address")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
 		if fs.NArg() != 0 {
-			return fmt.Errorf("usage: sm dashboard [--repo path] [--listen address]")
+			return fmt.Errorf("usage: sm %s [--repo path] [--listen address]", args[0])
 		}
 		root, err := expandHome(*repo)
 		if err != nil {
 			return err
+		}
+		if args[0] == "open" {
+			return OpenDashboard(root, *listen)
 		}
 		return RunDashboard(root, *listen)
 	case "producers":
@@ -215,6 +218,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `sm compiles an immutable Agent skill projection from a Git SSOT.
 
 Usage:
+  sm open [--repo path] [--listen address]
   sm dashboard [--repo path] [--listen address]
   sm producers [--repo path] [--json]
   sm scan [--repo path] [--json] [producer...]

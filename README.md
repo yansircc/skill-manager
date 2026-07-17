@@ -15,8 +15,11 @@ external artifact ──publish──> ~/.sm/skills
 Dashboard 使用内嵌 Svelte 前端；所有数据和操作都来自 Go 领域层，不保存浏览器端影子状态。
 
 ```sh
+sm open
+# opens http://127.0.0.1:7777
+
 sm dashboard
-# http://127.0.0.1:7777
+# serves without opening a browser
 ```
 
 Dashboard 支持：

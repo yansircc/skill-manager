@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 //go:embed dashboard/dist
@@ -61,6 +62,22 @@ type producerRequest struct {
 }
 
 func RunDashboard(repo, address string) error {
+	return serveDashboard(repo, address, nil)
+}
+
+func OpenDashboard(repo, address string) error {
+	root, err := repositoryRoot(repo)
+	if err != nil {
+		return err
+	}
+	url := "http://" + address
+	if dashboardServesRepo(url, root) {
+		return openURL(url)
+	}
+	return serveDashboard(root, address, openURL)
+}
+
+func serveDashboard(repo, address string, ready func(string) error) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return fmt.Errorf("invalid dashboard listen address: %w", err)
@@ -83,8 +100,32 @@ func RunDashboard(repo, address string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "sm dashboard: http://%s\n", listener.Addr())
+	url := "http://" + listener.Addr().String()
+	fmt.Fprintf(os.Stdout, "sm dashboard: %s\n", url)
+	if ready != nil {
+		if err := ready(url); err != nil {
+			_ = listener.Close()
+			return err
+		}
+	}
 	return httpServer.Serve(listener)
+}
+
+func dashboardServesRepo(url, repo string) bool {
+	client := http.Client{Timeout: 500 * time.Millisecond}
+	response, err := client.Get(url + "/api/state")
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return false
+	}
+	var state DashboardState
+	if err := json.NewDecoder(response.Body).Decode(&state); err != nil {
+		return false
+	}
+	return filepath.Clean(state.Repo) == filepath.Clean(repo)
 }
 
 type dashboardServer struct {

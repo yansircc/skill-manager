@@ -2,10 +2,25 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestDashboardServesRepoRequiresMatchingSSOT(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_ = json.NewEncoder(writer).Encode(DashboardState{Repo: "/tmp/one"})
+	}))
+	defer server.Close()
+	if !dashboardServesRepo(server.URL, "/tmp/one") {
+		t.Fatal("matching dashboard was not detected")
+	}
+	if dashboardServesRepo(server.URL, "/tmp/two") {
+		t.Fatal("dashboard for a different SSOT was reused")
+	}
+}
 
 func TestDashboardStateAndGrantUseSSOT(t *testing.T) {
 	repo := newTestRepository(t)

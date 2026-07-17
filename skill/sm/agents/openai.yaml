@@ -1,4 +1,4 @@
 interface:
   display_name: "SM Skill Manager"
   short_description: "Manage SM skills, sources, grants, and projections"
-  default_prompt: "Use $sm to inspect and safely update my SM skill registry."
+  default_prompt: "Use $sm to open my skill dashboard so I can inspect and manage it."

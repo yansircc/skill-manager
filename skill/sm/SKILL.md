@@ -1,6 +1,6 @@
 ---
 name: sm
-description: "Manage the local SM skill registry, Producer-owned skill artifacts, Agent grants, immutable projections, and the Svelte dashboard. Use when an agent needs to inspect, add, generate, update, publish, authorize, build, apply, verify, or troubleshoot skills governed by ~/.sm for Codex, Claude, or Pi."
+description: "Manage the local SM skill registry, Producer-owned skill artifacts, Agent grants, immutable projections, and the Svelte dashboard. Use when an agent needs to inspect, add, generate, update, publish, authorize, build, apply, verify, or troubleshoot skills governed by ~/.sm for Codex, Claude, or Pi, or when the user asks to open or show the skill-management page so they can inspect or operate it themselves."
 ---
 
 # SM
@@ -44,6 +44,14 @@ git -C ~/.sm commit -m "Update <producer-id> skill artifact"
 `sm update` is exactly `produce -> scan -> atomic publish`. A failure must leave the whole catalog unchanged.
 
 ## Manage Agent access
+
+When the user asks to see or operate the interface, open it directly:
+
+```sh
+sm open --repo ~/.sm
+```
+
+This reuses a matching running Dashboard or opens a new local Dashboard and keeps its server in the foreground. Use `sm dashboard` only when serving without opening a browser.
 
 Use the dashboard for grant toggles and source updates:
 

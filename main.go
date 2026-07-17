@@ -69,6 +69,23 @@ func RunCLI(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintf(stdout, "%s\t%s\t%d skills\n", producer.ID, producer.Root, len(producer.Skills))
 		}
 		return nil
+	case "producer":
+		if len(args) < 2 || args[1] != "relocate" {
+			return fmt.Errorf("usage: sm producer relocate [--repo path] producer new-root")
+		}
+		fs := newFlagSet("producer relocate", stderr)
+		repo := fs.String("repo", ".", "SSOT repository")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 2 {
+			return fmt.Errorf("usage: sm producer relocate [--repo path] producer new-root")
+		}
+		if err := RelocateProducer(*repo, fs.Arg(0), fs.Arg(1), stdout, stderr); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "%s\t%s\n", fs.Arg(0), fs.Arg(1))
+		return nil
 	case "scan":
 		fs := newFlagSet("scan", stderr)
 		repo := fs.String("repo", ".", "SSOT repository")
@@ -217,6 +234,7 @@ Usage:
   sm open [--repo path] [--listen address]
   sm dashboard [--repo path] [--listen address]
   sm producers [--repo path] [--json]
+  sm producer relocate [--repo path] producer new-root
   sm scan [--repo path] [--json] [producer...]
   sm produce [--repo path] producer...
   sm publish [--repo path] [--json] producer...

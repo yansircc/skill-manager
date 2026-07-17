@@ -30,6 +30,14 @@ type Producer struct {
 	Skills  []string         `json:"skills"`
 }
 
+type producerDocument struct {
+	Root    string           `json:"root"`
+	Note    string           `json:"note,omitempty"`
+	Build   ProducerBuild    `json:"build"`
+	Outputs []ProducerOutput `json:"outputs"`
+	Skills  []string         `json:"skills"`
+}
+
 type ArtifactState string
 
 const (
@@ -320,14 +328,29 @@ func Produce(repo string, ids []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	for _, producer := range selected {
-		command := exec.Command(producer.Build.Argv[0], producer.Build.Argv[1:]...)
-		command.Dir = producer.Root
-		command.Stdin = nil
-		command.Stdout = stdout
-		command.Stderr = stderr
-		if err := command.Run(); err != nil {
-			return fmt.Errorf("produce %s: %w", producer.ID, err)
+		if err := runProducerBuild(producer, stdout, stderr); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func runProducerBuild(producer Producer, stdout, stderr io.Writer) error {
+	command := exec.Command(producer.Build.Argv[0], producer.Build.Argv[1:]...)
+	command.Dir = producer.Root
+	command.Stdin = nil
+	command.Stdout = stdout
+	command.Stderr = stderr
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("produce %s: %w", producer.ID, err)
+	}
+	return nil
+}
+
+func writeProducer(repo string, producer Producer) error {
+	document := producerDocument{
+		Root: producer.Root, Note: producer.Note, Build: producer.Build,
+		Outputs: producer.Outputs, Skills: producer.Skills,
+	}
+	return writeJSONAtomic(filepath.Join(repo, "producers", producer.ID+".json"), document)
 }

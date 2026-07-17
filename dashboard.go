@@ -251,9 +251,24 @@ func dashboardState(repo string) (DashboardState, error) {
 		}
 	}
 	updates := map[string]string{}
+	producerFailureLabels := map[string]string{}
 	report, scanErr := ScanProducers(root, nil)
-	if scanErr == nil {
+	if scanErr != nil {
+		for _, producer := range producers {
+			producerFailureLabels[producer.ID] = "扫描失败"
+			for _, skill := range producer.Skills {
+				updates[skill] = string(ArtifactInvalid)
+			}
+		}
+	} else {
 		for _, scan := range report.Producers {
+			if scan.Error != "" {
+				producerFailureLabels[scan.Producer.ID] = "来源不可用"
+				for _, skill := range scan.Producer.Skills {
+					updates[skill] = string(ArtifactInvalid)
+				}
+				continue
+			}
 			for _, artifact := range scan.Artifacts {
 				updates[artifact.SkillID] = string(artifact.State)
 			}
@@ -305,7 +320,13 @@ func dashboardState(repo string) (DashboardState, error) {
 	sort.Slice(state.Skills, func(i, j int) bool { return state.Skills[i].ID < state.Skills[j].ID })
 	for _, producer := range producers {
 		status, label := "current", "已是最新"
+		if failureLabel := producerFailureLabels[producer.ID]; failureLabel != "" {
+			status, label = "error", failureLabel
+		}
 		for _, skill := range producer.Skills {
+			if producerFailureLabels[producer.ID] != "" {
+				continue
+			}
 			if updates[skill] == string(ArtifactUpdated) || updates[skill] == string(ArtifactNew) {
 				status, label = "updated", "有新产物"
 			}
@@ -410,32 +431,6 @@ func setGrant(repo, skill string, input grantRequest) error {
 	return syncConsumer(repo, input.Consumer, consumer)
 }
 
-func writeJSONAtomic(path string, value any) error {
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(temporary, path)
-}
-func commitSSOT(repo, message string) error {
-	if _, err := runGit(repo, "add", "skills", "consumers", "producers"); err != nil {
-		return err
-	}
-	status, err := runGit(repo, "status", "--porcelain")
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(status) == "" {
-		return nil
-	}
-	_, err = runGit(repo, "commit", "-m", message)
-	return err
-}
 func syncConsumer(repo, id string, consumer Consumer) error {
 	if _, err := Build(repo, "HEAD", id, ""); err != nil {
 		return err
@@ -511,13 +506,7 @@ func addProducer(repo string, input producerRequest) error {
 			}
 		}
 	}
-	if err := writeJSONAtomic(filepath.Join(repo, "producers", input.ID+".json"), struct {
-		Root    string           `json:"root"`
-		Note    string           `json:"note,omitempty"`
-		Build   ProducerBuild    `json:"build"`
-		Outputs []ProducerOutput `json:"outputs"`
-		Skills  []string         `json:"skills"`
-	}{root, producer.Note, producer.Build, producer.Outputs, producer.Skills}); err != nil {
+	if err := writeProducer(repo, producer); err != nil {
 		return err
 	}
 	return commitSSOT(repo, "Add producer "+input.ID)

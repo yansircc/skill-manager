@@ -30,6 +30,18 @@ sm scan --repo ~/.sm --json
 
 Treat `new`, `updated`, `conflict`, and `invalid` as distinct facts. Do not publish through conflicts or invalid artifacts.
 
+## Relocate a Producer
+
+When a Producer repository moves, update its locator explicitly:
+
+```sh
+sm producer relocate --repo ~/.sm <producer-id> <new-root>
+```
+
+Require a clean SSOT. The command runs the existing build in `new-root`, validates the complete declared Skill set, and commits only `producers/<id>.json`. It does not publish artifacts or rebuild Agent generations. Run `sm update` separately only when the artifact should change.
+
+Do not search for a replacement checkout by repository or directory name. Multiple clones and worktrees make inferred relocation ambiguous.
+
 ## Update generated skills
 
 Update only the requested Producer unless the user explicitly requests a fleet update:

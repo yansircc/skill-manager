@@ -153,6 +153,63 @@ func TestAddProducerPersistsTrimmedNote(t *testing.T) {
 	}
 }
 
+func TestDashboardStateMarksUnavailableProducerAsError(t *testing.T) {
+	repo := newTestRepository(t)
+	writeNamedSkill(t, filepath.Join(repo, "skills", "alpha"), "alpha", "Alpha skill")
+	producer := Producer{
+		ID: "example", Root: filepath.Join(t.TempDir(), "missing"), Build: ProducerBuild{Argv: []string{"true"}},
+		Outputs: []ProducerOutput{{Path: "dist"}}, Skills: []string{"alpha"},
+	}
+	if err := writeProducer(repo, producer); err != nil {
+		t.Fatal(err)
+	}
+	commitAll(t, repo, "initial")
+
+	state, err := dashboardState(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Producers) != 1 || state.Producers[0].Status != "error" || state.Producers[0].StatusLabel != "来源不可用" {
+		t.Fatalf("producer state = %#v", state.Producers)
+	}
+	if len(state.Skills) != 1 || state.Skills[0].Update != "error" {
+		t.Fatalf("skill state = %#v", state.Skills)
+	}
+}
+
+func TestDashboardStateNeverShowsCurrentWhenProducerScanFails(t *testing.T) {
+	repo := newTestRepository(t)
+	writeNamedSkill(t, filepath.Join(repo, "skills", "alpha"), "alpha", "Alpha skill")
+	for _, id := range []string{"one", "two"} {
+		root := t.TempDir()
+		writeNamedSkill(t, filepath.Join(root, "dist", "alpha"), "alpha", "Alpha skill")
+		producer := Producer{
+			ID: id, Root: root, Build: ProducerBuild{Argv: []string{"true"}},
+			Outputs: []ProducerOutput{{Path: "dist"}}, Skills: []string{"alpha"},
+		}
+		if err := writeProducer(repo, producer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commitAll(t, repo, "initial")
+
+	state, err := dashboardState(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Producers) != 2 {
+		t.Fatalf("producer state = %#v", state.Producers)
+	}
+	for _, producer := range state.Producers {
+		if producer.Status != "error" || producer.StatusLabel != "扫描失败" {
+			t.Fatalf("producer state = %#v", state.Producers)
+		}
+	}
+	if len(state.Skills) != 1 || state.Skills[0].Update != "error" {
+		t.Fatalf("skill state = %#v", state.Skills)
+	}
+}
+
 func writeNamedSkill(t *testing.T, root, id, description string) {
 	t.Helper()
 	writeFile(t, filepath.Join(root, "SKILL.md"), "---\nname: "+id+"\ndescription: "+description+"\n---\n")

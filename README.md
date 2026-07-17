@@ -130,6 +130,7 @@ Supported adapters:
 ```sh
 # Producers
 sm producers --repo ~/.sm
+sm producer relocate --repo ~/.sm <producer> <new-root>
 sm scan --repo ~/.sm --json
 sm produce --repo ~/.sm <producer>
 sm publish --repo ~/.sm <producer>
@@ -145,6 +146,8 @@ sm exec --repo ~/.sm <consumer> -- <agent arguments...>
 sm open --repo ~/.sm
 sm dashboard --repo ~/.sm --listen 127.0.0.1:7777
 ```
+
+`producer relocate` handles a moved Producer checkout. It requires a clean SSOT, runs the existing build in the new root, validates the complete declared Skill set, and commits only the Producer locator. It does not change the catalog or Agent generations; run `update` separately when the artifact should change.
 
 `scan` is read-only. `produce` only runs the configured Producer command. `publish` validates the complete owned artifact set and atomically replaces it in the catalog. `update` composes `produce -> scan -> publish`.
 

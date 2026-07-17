@@ -1,4 +1,4 @@
-package main
+package skillmanager
 
 import (
 	"encoding/json"
@@ -22,6 +22,17 @@ func TestDashboardServesRepoRequiresMatchingSSOT(t *testing.T) {
 	}
 }
 
+func TestDisplayPathShortensHomeDirectory(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".sm", "skills")
+	if got := displayPath(path); got != filepath.Join("~", ".sm", "skills") {
+		t.Fatalf("displayPath() = %q", got)
+	}
+}
+
 func TestDashboardStateAndGrantUseSSOT(t *testing.T) {
 	repo := newTestRepository(t)
 	if _, err := runGit(repo, "config", "user.name", "sm-test"); err != nil {
@@ -35,10 +46,11 @@ func TestDashboardStateAndGrantUseSSOT(t *testing.T) {
 	writeNamedSkill(t, filepath.Join(producerRoot, "dist", "alpha"), "alpha", "Alpha skill")
 	producer := struct {
 		Root    string           `json:"root"`
+		Note    string           `json:"note,omitempty"`
 		Build   ProducerBuild    `json:"build"`
 		Outputs []ProducerOutput `json:"outputs"`
 		Skills  []string         `json:"skills"`
-	}{producerRoot, ProducerBuild{Argv: []string{"make", "skill"}}, []ProducerOutput{{Path: "dist"}}, []string{"alpha"}}
+	}{producerRoot, "中文备注", ProducerBuild{Argv: []string{"make", "skill"}}, []ProducerOutput{{Path: "dist"}}, []string{"alpha"}}
 	data, _ := json.Marshal(producer)
 	writeFile(t, filepath.Join(repo, "producers", "example.json"), string(data))
 	writeConsumer(t, repo, "pi.global", Consumer{Adapter: "pi", Skills: []string{}})
@@ -50,6 +62,9 @@ func TestDashboardStateAndGrantUseSSOT(t *testing.T) {
 	}
 	if len(state.Skills) != 1 || state.Skills[0].Description != "Alpha skill" {
 		t.Fatalf("state = %#v", state)
+	}
+	if state.Skills[0].Note != "中文备注" {
+		t.Fatalf("skill note = %q", state.Skills[0].Note)
 	}
 	if len(state.Producers) != 1 || len(state.Producers[0].BuildArgv) != 2 || state.Producers[0].BuildArgv[0] != "make" || state.Producers[0].BuildArgv[1] != "skill" {
 		t.Fatalf("producer command = %#v", state.Producers)
@@ -113,6 +128,28 @@ func TestProducerPublishIsAtomicForOwnedSkillSet(t *testing.T) {
 	}
 	if metadata.Description != "new one" {
 		t.Fatalf("partial update escaped transaction: %q", metadata.Description)
+	}
+}
+
+func TestAddProducerPersistsTrimmedNote(t *testing.T) {
+	repo := newTestRepository(t)
+	if _, err := runGit(repo, "config", "user.name", "sm-test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(repo, "config", "user.email", "sm-test@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	producerRoot := t.TempDir()
+	writeNamedSkill(t, filepath.Join(producerRoot, "dist", "alpha"), "alpha", "Alpha skill")
+	if err := addProducer(repo, producerRequest{ID: "example", Root: producerRoot, Note: "  中文备注  ", Build: "make skill", Output: "dist"}); err != nil {
+		t.Fatal(err)
+	}
+	producers, err := loadProducers(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(producers) != 1 || producers[0].Note != "中文备注" {
+		t.Fatalf("producers = %#v", producers)
 	}
 }
 

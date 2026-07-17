@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package skillmanager
 
 import (
 	"fmt"

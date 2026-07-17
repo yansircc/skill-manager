@@ -1,4 +1,4 @@
-package main
+package skillmanager
 
 import (
 	"encoding/json"
@@ -10,9 +10,9 @@ import (
 )
 
 func TestCurrentVersionPrefersInjectedVersion(t *testing.T) {
-	original := version
-	version = "v1.2.3"
-	t.Cleanup(func() { version = original })
+	original := Version
+	Version = "v1.2.3"
+	t.Cleanup(func() { Version = original })
 	if got := currentVersion(); got != "v1.2.3" {
 		t.Fatalf("currentVersion() = %q", got)
 	}

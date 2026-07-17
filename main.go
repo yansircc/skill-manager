@@ -1,8 +1,7 @@
-package main
+package skillmanager
 
 import (
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -10,33 +9,19 @@ import (
 	"runtime/debug"
 )
 
-var version = "dev"
+var Version = "dev"
 
 func currentVersion() string {
-	if version != "dev" {
-		return version
+	if Version != "dev" {
+		return Version
 	}
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
 		return info.Main.Version
 	}
-	return version
+	return Version
 }
 
-func main() {
-	if err := runCLI(os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return
-		}
-		var exitError *ProcessExitError
-		if errors.As(err, &exitError) {
-			os.Exit(exitError.Code)
-		}
-		fmt.Fprintln(os.Stderr, "sm:", err)
-		os.Exit(1)
-	}
-}
-
-func runCLI(args []string, stdout, stderr io.Writer) error {
+func RunCLI(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printUsage(stderr)
 		return flag.ErrHelp

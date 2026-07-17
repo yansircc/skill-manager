@@ -9,7 +9,7 @@ dashboard:
 	npm run build --prefix dashboard
 
 build: dashboard
-	go build -trimpath -ldflags "-X main.version=$(VERSION)" .
+	go build -trimpath -ldflags "-X main.version=$(VERSION)" -o sm ./cmd/sm
 
 skill:
 	mkdir -p $(SKILL_DIST)
@@ -22,4 +22,4 @@ verify: dashboard
 	test -z "$$(gofmt -l .)"
 	go vet ./...
 	go test ./...
-	go build ./...
+	go build ./cmd/sm

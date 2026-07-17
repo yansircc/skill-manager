@@ -28,7 +28,7 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test ./...
-      - run: go build ./...
+      - run: go build ./cmd/sm
 
   cross-build:
     runs-on: ubuntu-latest
@@ -52,4 +52,4 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -o "${RUNNER_TEMP}/sm-${{ matrix.goos }}-${{ matrix.goarch }}" .
+        run: go build -o "${RUNNER_TEMP}/sm-${{ matrix.goos }}-${{ matrix.goarch }}" ./cmd/sm

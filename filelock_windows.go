@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package skillmanager
 
 import (
 	"os"

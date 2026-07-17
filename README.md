@@ -1,7 +1,7 @@
 # sm
 
-[![CI](https://github.com/yansir/sm/actions/workflows/ci.yml/badge.svg)](https://github.com/yansir/sm/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/yansir/sm.svg)](https://pkg.go.dev/github.com/yansir/sm)
+[![CI](https://github.com/yansircc/skill-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/yansircc/skill-manager/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/yansircc/skill-manager.svg)](https://pkg.go.dev/github.com/yansircc/skill-manager)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 `sm` is a local, Git-backed single source of truth for Agent Skills. It builds immutable, least-authority skill projections for Codex, Claude, Pi, and ordinary directories.
@@ -35,17 +35,17 @@ Agent tools discover skills through different directories and activation mechani
 ## Install
 
 ```sh
-go install github.com/yansir/sm@latest
+go install github.com/yansircc/skill-manager/cmd/sm@latest
 ```
 
 Or build from source:
 
 ```sh
-git clone https://github.com/yansir/sm.git
-cd sm
+git clone https://github.com/yansircc/skill-manager.git
+cd skill-manager
 npm ci --prefix dashboard
 npm run build --prefix dashboard
-go build -o sm .
+go build -o sm ./cmd/sm
 ```
 
 The compiled binary embeds the Dashboard; Node.js is not required at runtime.
@@ -83,13 +83,14 @@ Producer ownership is explicit:
 ```json
 {
   "root": "/absolute/path/to/producer",
+  "note": "Optional human-readable explanation shown in the Dashboard",
   "build": { "argv": ["make", "skill"] },
   "outputs": [{ "path": "dist/skill" }],
   "skills": ["example"]
 }
 ```
 
-The build command runs with `root` as its working directory. Outputs must remain outside the catalog. The emitted `SKILL.md` name must match the declared skill ID.
+The build command runs with `root` as its working directory. Outputs must remain outside the catalog. The emitted `SKILL.md` name must match the declared skill ID. When `note` is present, the Dashboard list shows it instead of the Skill description; the Skill artifact remains unchanged.
 
 A consumer is an allowlist:
 
@@ -154,7 +155,7 @@ npm run build --prefix dashboard
 test -z "$(gofmt -l .)"
 go vet ./...
 go test ./...
-go build ./...
+go build ./cmd/sm
 ```
 
 Dashboard output under `dashboard/dist` is tracked because it is embedded by Go. A frontend change is complete only when source and embedded output are updated together.

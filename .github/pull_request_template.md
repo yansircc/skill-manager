@@ -13,4 +13,4 @@ Describe the minimal implementation boundary.
 - [ ] `test -z "$(gofmt -l .)"`
 - [ ] `go vet ./...`
 - [ ] `go test ./...`
-- [ ] `go build ./...`
+- [ ] `go build ./cmd/sm`

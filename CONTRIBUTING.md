@@ -5,8 +5,8 @@
 Install Go 1.25 or newer, Node.js 22.12 or newer, npm, and Git.
 
 ```sh
-git clone https://github.com/yansir/sm.git
-cd sm
+git clone https://github.com/yansircc/skill-manager.git
+cd skill-manager
 npm ci --prefix dashboard
 ```
 
@@ -28,7 +28,7 @@ git diff --exit-code -- dashboard/dist
 test -z "$(gofmt -l .)"
 go vet ./...
 go test ./...
-go build ./...
+go build ./cmd/sm
 ```
 
 Frontend changes must include the regenerated `dashboard/dist` assets. Add focused tests for behavior changes and keep fixtures free of credentials or machine-specific paths.

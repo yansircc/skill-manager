@@ -1,4 +1,4 @@
-package main
+package skillmanager
 
 import (
 	"encoding/json"
@@ -24,6 +24,7 @@ type ProducerOutput struct {
 type Producer struct {
 	ID      string           `json:"id"`
 	Root    string           `json:"root"`
+	Note    string           `json:"note,omitempty"`
 	Build   ProducerBuild    `json:"build"`
 	Outputs []ProducerOutput `json:"outputs"`
 	Skills  []string         `json:"skills"`

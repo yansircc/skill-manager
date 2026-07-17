@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { createTable, getCoreRowModel, getFilteredRowModel, getPaginationRowModel } from '@tanstack/table-core'
 
-  let state = { skills: [], producers: [], agents: [], repo: '', head: '', dirty: false }
+  let state = { skills: [], producers: [], agents: [], repo: '', repoLabel: '', head: '', dirty: false }
   let page = 'skills'
   let query = ''
   let updateFilter = 'all'
@@ -16,7 +16,7 @@
   let toast = ''
   let updateRun = { producer: '', phase: 'idle', message: '' }
   let addSource = false
-  let sourceForm = { id: '', root: '', build: 'make skill', output: 'dist/skills' }
+  let sourceForm = { id: '', root: '', note: '', build: 'make skill', output: 'dist/skills' }
 
   const pageNames = { skills: '我的技能', agents: 'Agent', activity: '最近动态' }
   const agentLabel = { 'codex.global': 'Codex', 'claude.global': 'Claude', 'pi.global': 'Pi' }
@@ -27,6 +27,7 @@
   const columns = [
     { accessorKey: 'id' },
     { accessorKey: 'description' },
+    { accessorKey: 'note' },
     {
       id: 'updateScope',
       accessorFn: skill => skill.update,
@@ -135,7 +136,7 @@
     try {
       state = await api('/api/producers', { method: 'POST', body: JSON.stringify(sourceForm) })
       addSource = false
-      sourceForm = { id: '', root: '', build: 'make skill', output: 'dist/skills' }
+      sourceForm = { id: '', root: '', note: '', build: 'make skill', output: 'dist/skills' }
       showToast('技能来源已添加')
     } catch (cause) { error = cause.message }
     finally { working = '' }
@@ -173,7 +174,7 @@
       <button class:active={page === 'agents'} on:click={() => page = 'agents'}><span class="nav-icon">♙</span><span>Agent</span><em>{state.agents.length}</em></button>
       <button class:active={page === 'activity'} on:click={() => page = 'activity'}><span class="nav-icon">⌁</span><span>最近动态</span></button>
     </nav>
-    <div class="source"><small>技能库位置</small><code>{state.repo || '~/.sm'}</code><span class:warn={state.dirty}><i></i>{state.dirty ? '有尚未提交的变更' : '所有 Agent 已同步'}</span></div>
+    <div class="source"><small>技能库位置</small><code>{state.repoLabel || state.repo || '~/.sm'}</code><span class:warn={state.dirty}><i></i>{state.dirty ? '有尚未提交的变更' : '所有 Agent 已同步'}</span></div>
   </aside>
 
   <main>
@@ -191,7 +192,7 @@
             {#if !group.producer || group.producer.skillCount > 1}<div class="group-head"><div><strong>{group.id || '直接维护'}</strong><span>{group.skills.length} 个技能{group.producer ? ` · ${group.producer.statusLabel}` : ''}</span></div></div>{/if}
             {#each group.skills as skill (skill.id)}
               <div class="skill" role="button" tabindex="0" on:click={() => openSkill(skill)} on:keydown={(event) => event.key === 'Enter' && openSkill(skill)}>
-                <div><div class="skill-title"><strong>{skill.id}</strong>{#if skill.update === 'updated'}<span class="update-indicator">可更新</span>{:else if skill.update === 'error'}<span class="bad">有问题</span>{/if}</div><small>{skill.description}</small></div>
+                <div><div class="skill-title"><strong>{skill.id}</strong>{#if skill.update === 'updated'}<span class="update-indicator">可更新</span>{:else if skill.update === 'error'}<span class="bad">有问题</span>{/if}</div><small>{skill.note || skill.description}</small></div>
                 <div class="usage">{#if skill.agents.length}{#each skill.agents as agent}<span>{agentLabel[agent] || agent}</span>{/each}{:else}<small>暂未使用</small>{/if}</div>
                 <div class="arrow">›</div>
               </div>
@@ -214,12 +215,12 @@
     <div class="drawer-head"><div class="drawer-top"><span>技能详情</span><button class="close" on:click={closeDrawer}>×</button></div><h2>{selected.id}</h2><p>{selected.description}</p></div>
     <div class="drawer-body"><div class="section-label">可在哪些 Agent 中使用</div><div class="access-list">{#each state.agents as agent}<div class="access"><div class="mini-icon">{agent.short}</div><div><strong>{agent.name}</strong><small>全局环境</small></div><button class:on={selected.agents.includes(agent.id)} class="toggle" on:click={() => toggleGrant(selected, agent.id)} aria-label={`切换 ${agent.name}`}></button></div>{/each}</div>
       <div class="section-label">技能来源</div><div class="source-card"><div class="source-top"><div><strong>{selected.producer || '直接维护'}</strong><span>{selected.producer ? '由此来源生成并负责后续更新' : '直接在技能库中维护'}</span></div>{#if selected.producer && selected.update === 'updated'}<button class="btn source-update" disabled={!!working} on:click={() => updateProducer(selected.producer)}>{updateRun.producer === selected.producer && updateRun.phase === 'running' ? '更新中…' : '更新'}</button>{/if}</div>{#if selectedProducer}<div class="command-box"><small>更新时将运行</small><code>{producerCommand}</code><span>命令完成后会自动收编产物并同步所有 Agent。</span></div>{/if}{#if updateRun.producer === selected.producer && updateRun.phase !== 'idle'}<div class:error={updateRun.phase === 'error'} class:success={updateRun.phase === 'success'} class:running={updateRun.phase === 'running'} class="run-status"><i></i>{updateRun.message}</div>{/if}</div>
-      <div class="section-label">技能库位置</div><div class="path-card">{state.repo}/skills/{selected.id}</div>
+      <div class="section-label">技能库位置</div><div class="path-card">{state.repoLabel || state.repo}/skills/{selected.id}</div>
     </div><div class="drawer-foot"><span>修改后会自动同步</span></div>
   </aside>
 {/if}
 
 {#if addSource}
-  <div class="modal-bg"><form class="modal" on:submit|preventDefault={createProducer}><div class="modal-head"><h3>添加技能来源</h3><button type="button" class="close" on:click={() => addSource = false}>×</button></div><div class="modal-body"><p>选择一个能够生成技能的项目，并告诉 sm 如何生成和从哪里收取产物。</p><label>来源 ID<input bind:value={sourceForm.id} required placeholder="example"></label><label>项目位置<input bind:value={sourceForm.root} required placeholder="/absolute/path/to/repo"></label><label>生成方式<input bind:value={sourceForm.build} required></label><label>产物位置<input bind:value={sourceForm.output} required></label></div><div class="modal-foot"><button type="button" class="btn" on:click={() => addSource = false}>取消</button><button class="btn primary" disabled={!!working}>添加来源</button></div></form></div>
+  <div class="modal-bg"><form class="modal" on:submit|preventDefault={createProducer}><div class="modal-head"><h3>添加技能来源</h3><button type="button" class="close" on:click={() => addSource = false}>×</button></div><div class="modal-body"><p>选择一个能够生成技能的项目，并告诉 sm 如何生成和从哪里收取产物。</p><label>来源 ID<input bind:value={sourceForm.id} required placeholder="example"></label><label>备注（可选）<input bind:value={sourceForm.note} placeholder="用一句话说明这些技能的用途"></label><label>项目位置<input bind:value={sourceForm.root} required placeholder="/absolute/path/to/repo"></label><label>生成方式<input bind:value={sourceForm.build} required></label><label>产物位置<input bind:value={sourceForm.output} required></label></div><div class="modal-foot"><button type="button" class="btn" on:click={() => addSource = false}>取消</button><button class="btn primary" disabled={!!working}>添加来源</button></div></form></div>
 {/if}
 {#if toast}<div class="toast">{toast}</div>{/if}

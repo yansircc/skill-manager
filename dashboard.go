@@ -1,4 +1,4 @@
-package main
+package skillmanager
 
 import (
 	"embed"
@@ -21,6 +21,7 @@ var dashboardAssets embed.FS
 type DashboardSkill struct {
 	ID          string   `json:"id"`
 	Description string   `json:"description"`
+	Note        string   `json:"note,omitempty"`
 	Producer    string   `json:"producer,omitempty"`
 	Agents      []string `json:"agents"`
 	Update      string   `json:"update"`
@@ -29,6 +30,7 @@ type DashboardSkill struct {
 type DashboardProducer struct {
 	ID          string   `json:"id"`
 	Root        string   `json:"root"`
+	Note        string   `json:"note,omitempty"`
 	BuildArgv   []string `json:"buildArgv"`
 	SkillCount  int      `json:"skillCount"`
 	Status      string   `json:"status"`
@@ -45,6 +47,7 @@ type DashboardAgent struct {
 
 type DashboardState struct {
 	Repo      string              `json:"repo"`
+	RepoLabel string              `json:"repoLabel"`
 	Head      string              `json:"head"`
 	Dirty     bool                `json:"dirty"`
 	Skills    []DashboardSkill    `json:"skills"`
@@ -59,6 +62,7 @@ type grantRequest struct {
 type producerRequest struct {
 	ID     string `json:"id"`
 	Root   string `json:"root"`
+	Note   string `json:"note"`
 	Build  string `json:"build"`
 	Output string `json:"output"`
 }
@@ -226,15 +230,17 @@ func dashboardState(repo string) (DashboardState, error) {
 	if err != nil {
 		return DashboardState{}, err
 	}
-	state := DashboardState{Repo: root, Head: head[:min(8, len(head))], Dirty: strings.TrimSpace(status) != "", Skills: []DashboardSkill{}, Producers: []DashboardProducer{}, Agents: []DashboardAgent{}}
+	state := DashboardState{Repo: root, RepoLabel: displayPath(root), Head: head[:min(8, len(head))], Dirty: strings.TrimSpace(status) != "", Skills: []DashboardSkill{}, Producers: []DashboardProducer{}, Agents: []DashboardAgent{}}
 	producers, err := loadProducers(root)
 	if err != nil {
 		return DashboardState{}, err
 	}
 	owner := map[string]string{}
+	notes := map[string]string{}
 	for _, producer := range producers {
 		for _, skill := range producer.Skills {
 			owner[skill] = producer.ID
+			notes[skill] = producer.Note
 		}
 	}
 	updates := map[string]string{}
@@ -287,7 +293,7 @@ func dashboardState(repo string) (DashboardState, error) {
 		if update == string(ArtifactInvalid) || update == string(ArtifactConflict) {
 			update = "error"
 		}
-		state.Skills = append(state.Skills, DashboardSkill{ID: entry.Name(), Description: metadata.Description, Producer: owner[entry.Name()], Agents: agents, Update: update})
+		state.Skills = append(state.Skills, DashboardSkill{ID: entry.Name(), Description: metadata.Description, Note: notes[entry.Name()], Producer: owner[entry.Name()], Agents: agents, Update: update})
 	}
 	sort.Slice(state.Skills, func(i, j int) bool { return state.Skills[i].ID < state.Skills[j].ID })
 	for _, producer := range producers {
@@ -300,7 +306,7 @@ func dashboardState(repo string) (DashboardState, error) {
 				status, label = "error", "产物有问题"
 			}
 		}
-		state.Producers = append(state.Producers, DashboardProducer{ID: producer.ID, Root: producer.Root, BuildArgv: append([]string(nil), producer.Build.Argv...), SkillCount: len(producer.Skills), Status: status, StatusLabel: label})
+		state.Producers = append(state.Producers, DashboardProducer{ID: producer.ID, Root: producer.Root, Note: producer.Note, BuildArgv: append([]string(nil), producer.Build.Argv...), SkillCount: len(producer.Skills), Status: status, StatusLabel: label})
 	}
 	for id, consumer := range consumers {
 		name, short := agentIdentity(consumer.Adapter)
@@ -309,6 +315,22 @@ func dashboardState(repo string) (DashboardState, error) {
 	rank := map[string]int{"codex.global": 0, "claude.global": 1, "pi.global": 2}
 	sort.Slice(state.Agents, func(i, j int) bool { return rank[state.Agents[i].ID] < rank[state.Agents[j].ID] })
 	return state, nil
+}
+
+func displayPath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	clean := filepath.Clean(path)
+	home = filepath.Clean(home)
+	if clean == home {
+		return "~"
+	}
+	if strings.HasPrefix(clean, home+string(filepath.Separator)) {
+		return "~" + strings.TrimPrefix(clean, home)
+	}
+	return path
 }
 
 func readConsumers(repo string) (map[string]Consumer, error) {
@@ -465,7 +487,7 @@ func addProducer(repo string, input producerRequest) error {
 	if err != nil {
 		return err
 	}
-	producer := Producer{ID: input.ID, Root: root, Build: ProducerBuild{Argv: argv}, Outputs: []ProducerOutput{{Path: output}}, Skills: ids}
+	producer := Producer{ID: input.ID, Root: root, Note: strings.TrimSpace(input.Note), Build: ProducerBuild{Argv: argv}, Outputs: []ProducerOutput{{Path: output}}, Skills: ids}
 	if err := validateProducer(producer); err != nil {
 		return err
 	}
@@ -484,10 +506,11 @@ func addProducer(repo string, input producerRequest) error {
 	}
 	if err := writeJSONAtomic(filepath.Join(repo, "producers", input.ID+".json"), struct {
 		Root    string           `json:"root"`
+		Note    string           `json:"note,omitempty"`
 		Build   ProducerBuild    `json:"build"`
 		Outputs []ProducerOutput `json:"outputs"`
 		Skills  []string         `json:"skills"`
-	}{root, producer.Build, producer.Outputs, producer.Skills}); err != nil {
+	}{root, producer.Note, producer.Build, producer.Outputs, producer.Skills}); err != nil {
 		return err
 	}
 	return commitSSOT(repo, "Add producer "+input.ID)

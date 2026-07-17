@@ -1,6 +1,6 @@
 //go:build !darwin && !linux && !windows
 
-package main
+package skillmanager
 
 import "fmt"
 

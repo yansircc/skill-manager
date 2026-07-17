@@ -79,6 +79,7 @@ Prefer the dashboard. A registry entry has this contract:
 ```json
 {
   "root": "/absolute/path/to/repo",
+  "note": "Optional explanation shown in the Dashboard list",
   "build": { "argv": ["make", "skill"] },
   "outputs": [{ "path": "dist/skill" }],
   "skills": ["stable-skill-id"]

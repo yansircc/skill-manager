@@ -6,7 +6,7 @@ Security fixes are applied to the latest release and the default branch.
 
 ## Reporting a vulnerability
 
-Do not open a public issue for a suspected vulnerability. Use [GitHub private vulnerability reporting](https://github.com/yansir/sm/security/advisories/new) and include the affected version, impact, reproduction steps, and any proposed mitigation.
+Do not open a public issue for a suspected vulnerability. Use [GitHub private vulnerability reporting](https://github.com/yansircc/skill-manager/security/advisories/new) and include the affected version, impact, reproduction steps, and any proposed mitigation.
 
 ## Security model
 

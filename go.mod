@@ -1,4 +1,4 @@
-module github.com/yansir/sm
+module github.com/yansircc/skill-manager
 
 go 1.25
 

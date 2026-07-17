@@ -71,6 +71,12 @@ func TestDashboardStateAndGrantUseSSOT(t *testing.T) {
 	if status != "" {
 		t.Fatalf("dashboard left dirty SSOT: %s", status)
 	}
+	if err := os.Mkdir(filepath.Join(repo, "skills", "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dashboardState(repo); err == nil {
+		t.Fatal("dashboard accepted an empty skill directory")
+	}
 }
 
 func TestProducerPublishIsAtomicForOwnedSkillSet(t *testing.T) {

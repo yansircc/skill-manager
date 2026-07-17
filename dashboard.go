@@ -264,10 +264,16 @@ func dashboardState(repo string) (DashboardState, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		metadata, metadataErr := readSkillMetadata(filepath.Join(root, "skills", entry.Name()))
-		description := ""
-		if metadataErr == nil {
-			description = metadata.Description
+		path := filepath.Join(root, "skills", entry.Name())
+		if err := validateCanonicalSkill(path); err != nil {
+			return DashboardState{}, fmt.Errorf("skill %s: %w", entry.Name(), err)
+		}
+		metadata, err := readSkillMetadata(path)
+		if err != nil {
+			return DashboardState{}, fmt.Errorf("skill %s: %w", entry.Name(), err)
+		}
+		if metadata.Name != entry.Name() {
+			return DashboardState{}, fmt.Errorf("skill directory %q does not match frontmatter name %q", entry.Name(), metadata.Name)
 		}
 		agents := grants[entry.Name()]
 		if agents == nil {
@@ -281,7 +287,7 @@ func dashboardState(repo string) (DashboardState, error) {
 		if update == string(ArtifactInvalid) || update == string(ArtifactConflict) {
 			update = "error"
 		}
-		state.Skills = append(state.Skills, DashboardSkill{ID: entry.Name(), Description: description, Producer: owner[entry.Name()], Agents: agents, Update: update})
+		state.Skills = append(state.Skills, DashboardSkill{ID: entry.Name(), Description: metadata.Description, Producer: owner[entry.Name()], Agents: agents, Update: update})
 	}
 	sort.Slice(state.Skills, func(i, j int) bool { return state.Skills[i].ID < state.Skills[j].ID })
 	for _, producer := range producers {

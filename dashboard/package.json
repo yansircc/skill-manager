@@ -12,6 +12,7 @@
     "vite": "8.1.5"
   },
   "dependencies": {
-    "@tanstack/table-core": "8.21.3"
+    "@tanstack/table-core": "8.21.3",
+    "highlight.js": "11.11.1"
   }
 }

@@ -1,6 +1,19 @@
 <script>
   import { onMount } from 'svelte'
   import { createTable, getCoreRowModel, getFilteredRowModel, getPaginationRowModel } from '@tanstack/table-core'
+  import hljs from 'highlight.js/lib/core'
+  import bash from 'highlight.js/lib/languages/bash'
+  import css from 'highlight.js/lib/languages/css'
+  import go from 'highlight.js/lib/languages/go'
+  import ini from 'highlight.js/lib/languages/ini'
+  import javascript from 'highlight.js/lib/languages/javascript'
+  import json from 'highlight.js/lib/languages/json'
+  import markdown from 'highlight.js/lib/languages/markdown'
+  import plaintext from 'highlight.js/lib/languages/plaintext'
+  import python from 'highlight.js/lib/languages/python'
+  import typescript from 'highlight.js/lib/languages/typescript'
+  import xml from 'highlight.js/lib/languages/xml'
+  import yaml from 'highlight.js/lib/languages/yaml'
 
   let state = { skills: [], producers: [], agents: [], repo: '', repoLabel: '', head: '', dirty: false }
   let page = 'skills'
@@ -15,6 +28,11 @@
   let error = ''
   let toast = ''
   let updateRun = { producer: '', phase: 'idle', message: '' }
+  let finderFiles = []
+  let finderFile = null
+  let finderLoading = false
+  let finderError = ''
+  let copied = false
   let addSource = false
   let sourceForm = { id: '', root: '', note: '', build: 'make skill', output: 'dist/skills' }
 
@@ -24,6 +42,8 @@
   const pageSizeKey = 'sm.dashboard.pageSize'
   const updateFilterLabel = { updated: '有更新', current: '已是最新', error: '有问题' }
   const usageFilterLabel = { 'claude.global': 'Claude 在用', 'codex.global': 'Codex 在用', 'pi.global': 'Pi 在用', unused: '未使用' }
+  const languages = { bash, css, go, ini, javascript, json, markdown, plaintext, python, typescript, xml, yaml }
+  for (const [name, language] of Object.entries(languages)) hljs.registerLanguage(name, language)
   const columns = [
     { accessorKey: 'id' },
     { accessorKey: 'description' },
@@ -83,7 +103,11 @@
   })()
   $: usedCount = state.skills.filter(skill => skill.agents.length).length
   $: selectedProducer = selected?.producer ? state.producers.find(producer => producer.id === selected.producer) : null
-  $: producerCommand = selectedProducer ? `cd ${shellWord(selectedProducer.root)} && ${selectedProducer.buildArgv.map(shellWord).join(' ')}` : ''
+  $: producerCommand = selectedProducer ? `cd ${shellWord(selectedProducer.rootLabel || selectedProducer.root)} && ${selectedProducer.buildArgv.map(shellWord).join(' ')}` : ''
+  $: unsyncedAgents = state.agents.filter(agent => !agent.synced)
+  $: libraryStatus = loading ? '正在读取…' : state.dirty ? '技能库有尚未提交的变更' : unsyncedAgents.length ? `${unsyncedAgents.map(agent => agent.name).join('、')} 需要同步` : '所有 Agent 已同步'
+  $: highlightedCode = finderFile?.preview ? hljs.highlight(finderFile.content, { language: languages[finderFile.language] ? finderFile.language : 'plaintext' }).value : ''
+  $: codeLines = finderFile?.preview ? finderFile.content.split('\n').length : 0
 
   async function api(path, options) {
     const response = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options })
@@ -97,7 +121,11 @@
     try {
       const selectedID = new URLSearchParams(location.search).get('skill') || selected?.id
       state = await api('/api/state')
-      if (selectedID) selected = state.skills.find(skill => skill.id === selectedID) || null
+      if (selectedID) {
+        const skill = state.skills.find(item => item.id === selectedID) || null
+        if (skill && selected?.id !== skill.id) await openSkill(skill)
+        else selected = skill
+      }
       error = ''
     }
     catch (cause) { error = cause.message }
@@ -153,17 +181,48 @@
     pageIndex = 0
     localStorage.setItem(pageSizeKey, String(pageSize))
   }
-  function openSkill(skill) {
+  async function openSkill(skill) {
     selected = skill
     if (updateRun.producer !== skill.producer) updateRun = { producer: '', phase: 'idle', message: '' }
+    finderFiles = []
+    finderFile = null
+    finderError = ''
+    finderLoading = true
+    try {
+      const result = await api(`/api/skills/${encodeURIComponent(skill.id)}/files`)
+      finderFiles = result.files
+      const first = finderFiles.find(file => !file.directory && file.path === 'SKILL.md') || finderFiles.find(file => !file.directory)
+      if (first) await openFile(first.path)
+    } catch (cause) { finderError = cause.message }
+    finally { finderLoading = false }
   }
-  function closeDrawer() { selected = null }
+  async function openFile(path) {
+    finderLoading = true
+    finderError = ''
+    copied = false
+    try { finderFile = await api(`/api/skills/${encodeURIComponent(selected.id)}/file?path=${encodeURIComponent(path)}`) }
+    catch (cause) { finderError = cause.message }
+    finally { finderLoading = false }
+  }
+  async function copyFile() {
+    if (!finderFile?.preview) return
+    await navigator.clipboard.writeText(finderFile.content)
+    copied = true
+    setTimeout(() => copied = false, 1400)
+  }
+  function closeDetail() { selected = null; finderFiles = []; finderFile = null; finderError = '' }
+  function handleKeydown(event) { if (event.key === 'Escape' && selected) closeDetail() }
+  function fileName(path) { return path.split('/').at(-1) }
+  function fileDepth(path) { return Math.max(0, path.split('/').length - 1) }
+  function formatBytes(size) { return size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KB` : `${(size / 1024 / 1024).toFixed(1)} MB` }
   onMount(() => {
     const saved = Number(localStorage.getItem(pageSizeKey))
     if (pageSizes.includes(saved)) pageSize = saved
     refresh()
   })
 </script>
+
+<svelte:window on:keydown={handleKeydown} />
 
 <div class="app">
   <aside class="sidebar">
@@ -174,11 +233,11 @@
       <button class:active={page === 'agents'} on:click={() => page = 'agents'}><span class="nav-icon">♙</span><span>Agent</span><em>{state.agents.length}</em></button>
       <button class:active={page === 'activity'} on:click={() => page = 'activity'}><span class="nav-icon">⌁</span><span>最近动态</span></button>
     </nav>
-    <div class="source"><small>技能库位置</small><code>{state.repoLabel || state.repo || '~/.sm'}</code><span class:warn={state.dirty}><i></i>{state.dirty ? '有尚未提交的变更' : '所有 Agent 已同步'}</span></div>
+    <div class="source"><small>技能库位置</small><code>{state.repoLabel || state.repo || '~/.sm'}</code><span class:warn={state.dirty || unsyncedAgents.length}><i></i>{libraryStatus}</span></div>
   </aside>
 
   <main>
-    <header class="topbar"><div class="crumb">技能库 / <b>{pageNames[page]}</b></div><div class="top-right"><button class="sync" on:click={refresh} disabled={loading || working}><i></i><span>{working || (loading ? '正在读取…' : '已同步')}</span></button><div class="avatar">YS</div></div></header>
+    <header class="topbar"><div class="crumb">技能库 / <b>{pageNames[page]}</b></div></header>
     {#if error}<div class="error"><span>{error}</span><button on:click={() => error = ''}>×</button></div>{/if}
 
     {#if page === 'skills'}
@@ -210,14 +269,27 @@
 </div>
 
 {#if selected}
-  <button class="backdrop" aria-label="关闭" on:click={closeDrawer}></button>
-  <aside class="drawer">
-    <div class="drawer-head"><div class="drawer-top"><span>技能详情</span><button class="close" on:click={closeDrawer}>×</button></div><h2>{selected.id}</h2><p>{selected.description}</p></div>
-    <div class="drawer-body"><div class="section-label">可在哪些 Agent 中使用</div><div class="access-list">{#each state.agents as agent}<div class="access"><div class="mini-icon">{agent.short}</div><div><strong>{agent.name}</strong><small>全局环境</small></div><button class:on={selected.agents.includes(agent.id)} class="toggle" on:click={() => toggleGrant(selected, agent.id)} aria-label={`切换 ${agent.name}`}></button></div>{/each}</div>
-      <div class="section-label">技能来源</div><div class="source-card"><div class="source-top"><div><strong>{selected.producer || '直接维护'}</strong><span>{selected.producer ? '由此来源生成并负责后续更新' : '直接在技能库中维护'}</span></div>{#if selected.producer && selected.update === 'updated'}<button class="btn source-update" disabled={!!working} on:click={() => updateProducer(selected.producer)}>{updateRun.producer === selected.producer && updateRun.phase === 'running' ? '更新中…' : '更新'}</button>{/if}</div>{#if selectedProducer}<div class="command-box"><small>更新时将运行</small><code>{producerCommand}</code><span>命令完成后会自动收编产物并同步所有 Agent。</span></div>{/if}{#if updateRun.producer === selected.producer && updateRun.phase !== 'idle'}<div class:error={updateRun.phase === 'error'} class:success={updateRun.phase === 'success'} class:running={updateRun.phase === 'running'} class="run-status"><i></i>{updateRun.message}</div>{/if}</div>
-      <div class="section-label">技能库位置</div><div class="path-card">{state.repoLabel || state.repo}/skills/{selected.id}</div>
-    </div><div class="drawer-foot"><span>修改后会自动同步</span></div>
-  </aside>
+  <button class="detail-backdrop" aria-label="关闭" on:click={closeDetail}></button>
+  <div class="detail-dialog" role="dialog" aria-modal="true" aria-label={`${selected.id} Skill Finder`}>
+    <header class="detail-head"><div class="detail-icon">SK</div><div><h2>{selected.id}</h2><p>{selected.note || selected.description}</p></div><span class="readonly-badge">只读浏览</span><span class="file-count">{finderFiles.filter(file => !file.directory).length} 个文件</span><button class="close detail-close" on:click={closeDetail}>×</button></header>
+    <div class="detail-workspace">
+      <aside class="finder-pane"><div class="finder-head"><strong>文件</strong><span>FINDER</span></div><div class="file-tree">
+        {#if finderLoading && !finderFiles.length}<div class="finder-message">正在读取文件…</div>
+        {:else if finderError && !finderFiles.length}<div class="finder-message bad">{finderError}</div>
+        {:else}{#each finderFiles as file (file.path)}<button class:active={finderFile?.path === file.path} class:directory={file.directory} disabled={file.directory} style={`--depth:${fileDepth(file.path)}`} on:click={() => !file.directory && openFile(file.path)}><i>{file.directory ? '▾' : '◇'}</i><span>{fileName(file.path)}</span>{#if !file.directory}<em>{formatBytes(file.size)}</em>{/if}</button>{/each}{/if}
+      </div><div class="finder-path">{state.repoLabel || state.repo}/skills/{selected.id}</div></aside>
+      <main class="code-pane"><div class="code-head"><span>{selected.id} / <b>{finderFile?.path || '选择文件'}</b></span>{#if finderFile?.preview}<button class:done={copied} on:click={copyFile}>{copied ? '已复制' : '复制内容'}</button>{/if}</div>
+        <div class="code-body">{#if finderLoading && !finderFile}<div class="code-message">正在加载文件…</div>{:else if finderError}<div class="code-message bad">{finderError}</div>{:else if finderFile && !finderFile.preview}<div class="code-message"><strong>无法预览</strong><span>{finderFile.unavailable}</span></div>{:else if finderFile}<div class="code-view"><div class="line-numbers">{#each Array(codeLines) as _, index}<span>{index + 1}</span>{/each}</div><pre><code class="hljs">{@html highlightedCode}</code></pre></div>{:else}<div class="code-message">此 Skill 没有可预览的文件</div>{/if}</div>
+      </main>
+      <aside class="inspector-pane">
+        <div class="inspector-section"><div class="section-label">备注</div><div class="inspector-card"><p class="skill-note">{selected.note || selected.description}</p></div></div>
+        <div class="inspector-section"><div class="section-label">可在哪些 Agent 中使用</div><div class="access-list compact">{#each state.agents as agent}<div class="access"><div class="mini-icon">{agent.short}</div><div><strong>{agent.name}</strong><small>全局环境</small></div><button class:on={selected.agents.includes(agent.id)} class="toggle" disabled={!!working} on:click={() => toggleGrant(selected, agent.id)} aria-label={`切换 ${agent.name}`}></button></div>{/each}</div></div>
+        <div class="inspector-section"><div class="section-label">技能来源</div><div class="source-card"><div class="source-top"><div><strong>{selected.producer || '直接维护'}</strong><span>{selected.producer ? '由此来源生成并负责后续更新' : '直接在技能库中维护'}</span></div>{#if selected.producer && selected.update === 'updated'}<button class="btn source-update" disabled={!!working} on:click={() => updateProducer(selected.producer)}>{updateRun.producer === selected.producer && updateRun.phase === 'running' ? '更新中…' : '更新'}</button>{/if}</div>{#if selectedProducer}<div class="command-box"><small>更新时将运行</small><code>{producerCommand}</code><span>命令完成后会自动收编产物并同步所有 Agent。</span></div>{/if}{#if updateRun.producer === selected.producer && updateRun.phase !== 'idle'}<div class:error={updateRun.phase === 'error'} class:success={updateRun.phase === 'success'} class:running={updateRun.phase === 'running'} class="run-status"><i></i>{updateRun.message}</div>{/if}</div></div>
+        {#if finderFile}<div class="inspector-section"><div class="section-label">文件信息</div><div class="inspector-card file-meta"><span>类型</span><b>{finderFile.language}</b><span>大小</span><b>{formatBytes(finderFile.size)}</b><span>编码</span><b>{finderFile.preview ? 'UTF-8' : '—'}</b></div></div>{/if}
+        <div class="inspector-section"><div class="section-label">技能库位置</div><div class="path-card">{state.repoLabel || state.repo}/skills/{selected.id}</div></div>
+      </aside>
+    </div>
+  </div>
 {/if}
 
 {#if addSource}

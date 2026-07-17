@@ -14,6 +14,20 @@ committed Git tree ──build──> immutable generation ──activate──>
 
 The editable truth lives in one place. Producer outputs cannot become Agent discovery roots, and consumers are built only from committed catalog state.
 
+## Dashboard
+
+The skill catalog shows ownership notes, update state, and the Agent environments currently using each Skill.
+
+![Skill catalog with Agent usage and synchronization state](docs/screenshots/dashboard-overview.png)
+
+Open any Skill to browse its canonical files read-only, inspect highlighted source, manage Agent access, and run its declared Producer update.
+
+![Read-only Skill Finder with source preview and Agent controls](docs/screenshots/skill-finder.png)
+
+Agent synchronization is derived from each consumer projection, so an out-of-date Agent is visible directly instead of being hidden behind a global status.
+
+![Agent synchronization overview showing Codex requires synchronization](docs/screenshots/agents.png)
+
 ## Why
 
 Agent tools discover skills through different directories and activation mechanisms. Copying skills into each tool creates multiple editable truths, stale copies, and unclear authorization.

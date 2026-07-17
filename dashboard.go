@@ -30,6 +30,7 @@ type DashboardSkill struct {
 type DashboardProducer struct {
 	ID          string   `json:"id"`
 	Root        string   `json:"root"`
+	RootLabel   string   `json:"rootLabel"`
 	Note        string   `json:"note,omitempty"`
 	BuildArgv   []string `json:"buildArgv"`
 	SkillCount  int      `json:"skillCount"`
@@ -167,6 +168,12 @@ func (server *dashboardServer) serveAPI(writer http.ResponseWriter, request *htt
 	switch {
 	case request.Method == http.MethodGet && request.URL.Path == "/api/state":
 		result, err = dashboardState(server.repo)
+	case request.Method == http.MethodGet && strings.HasPrefix(request.URL.Path, "/api/skills/") && strings.HasSuffix(request.URL.Path, "/files"):
+		id := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/api/skills/"), "/files")
+		result, err = listDashboardSkillFiles(server.repo, id)
+	case request.Method == http.MethodGet && strings.HasPrefix(request.URL.Path, "/api/skills/") && strings.HasSuffix(request.URL.Path, "/file"):
+		id := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/api/skills/"), "/file")
+		result, err = readDashboardSkillFile(server.repo, id, request.URL.Query().Get("path"))
 	case request.Method == http.MethodPost && strings.HasPrefix(request.URL.Path, "/api/skills/") && strings.HasSuffix(request.URL.Path, "/grants"):
 		id := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/api/skills/"), "/grants")
 		var input grantRequest
@@ -306,7 +313,7 @@ func dashboardState(repo string) (DashboardState, error) {
 				status, label = "error", "产物有问题"
 			}
 		}
-		state.Producers = append(state.Producers, DashboardProducer{ID: producer.ID, Root: producer.Root, Note: producer.Note, BuildArgv: append([]string(nil), producer.Build.Argv...), SkillCount: len(producer.Skills), Status: status, StatusLabel: label})
+		state.Producers = append(state.Producers, DashboardProducer{ID: producer.ID, Root: producer.Root, RootLabel: displayPath(producer.Root), Note: producer.Note, BuildArgv: append([]string(nil), producer.Build.Argv...), SkillCount: len(producer.Skills), Status: status, StatusLabel: label})
 	}
 	for id, consumer := range consumers {
 		name, short := agentIdentity(consumer.Adapter)

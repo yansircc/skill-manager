@@ -116,7 +116,7 @@ func unlockRepository(file *os.File) {
 }
 
 func copyCatalog(source, destination string) error {
-	entries, err := os.ReadDir(source)
+	entries, err := catalogEntries(source)
 	if err != nil {
 		return err
 	}
@@ -136,7 +136,7 @@ func copyCatalog(source, destination string) error {
 }
 
 func validateCatalog(root string) error {
-	entries, err := os.ReadDir(root)
+	entries, err := catalogEntries(root)
 	if err != nil {
 		return err
 	}
@@ -157,4 +157,48 @@ func validateCatalog(root string) error {
 		}
 	}
 	return nil
+}
+
+// catalogEntries returns every filesystem-backed catalog fact. Git cannot
+// represent empty directories, so recursively empty directory trees are not
+// skills and must not affect catalog behavior after tracked files are removed.
+func catalogEntries(root string) ([]os.DirEntry, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	filtered := entries[:0]
+	for _, entry := range entries {
+		if entry.IsDir() {
+			hasFiles, err := directoryHasFiles(filepath.Join(root, entry.Name()))
+			if err != nil {
+				return nil, err
+			}
+			if !hasFiles {
+				continue
+			}
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered, nil
+}
+
+func directoryHasFiles(root string) (bool, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			return true, nil
+		}
+		hasFiles, err := directoryHasFiles(filepath.Join(root, entry.Name()))
+		if err != nil {
+			return false, err
+		}
+		if hasFiles {
+			return true, nil
+		}
+	}
+	return false, nil
 }

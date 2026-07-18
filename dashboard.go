@@ -284,7 +284,7 @@ func dashboardState(repo string) (DashboardState, error) {
 			grants[skill] = append(grants[skill], id)
 		}
 	}
-	entries, err := os.ReadDir(filepath.Join(root, "skills"))
+	entries, err := catalogEntries(filepath.Join(root, "skills"))
 	if err != nil {
 		return DashboardState{}, err
 	}

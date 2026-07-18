@@ -2,6 +2,7 @@ package skillmanager
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -89,8 +90,19 @@ func TestDashboardStateAndGrantUseSSOT(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(repo, "skills", "empty"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(repo, "skills", "nested-empty", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state, err = dashboardState(repo)
+	if err != nil {
+		t.Fatalf("empty filesystem-only directories affected catalog discovery: %v", err)
+	}
+	if len(state.Skills) != 1 || state.Skills[0].ID != "alpha" {
+		t.Fatalf("empty directories became catalog skills: %#v", state.Skills)
+	}
+	writeFile(t, filepath.Join(repo, "skills", "malformed", "notes.txt"), "not a skill")
 	if _, err := dashboardState(repo); err == nil {
-		t.Fatal("dashboard accepted an empty skill directory")
+		t.Fatal("dashboard accepted a non-empty skill directory without SKILL.md")
 	}
 }
 
@@ -107,8 +119,14 @@ func TestProducerPublishIsAtomicForOwnedSkillSet(t *testing.T) {
 	}{producerRoot, ProducerBuild{Argv: []string{"true"}}, []ProducerOutput{{Path: "dist"}}, []string{"one", "two"}}
 	data, _ := json.MarshalIndent(producer, "", "  ")
 	writeFile(t, filepath.Join(repo, "producers", "example.json"), string(data))
+	if err := os.MkdirAll(filepath.Join(repo, "skills", "retired", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := PublishProducers(repo, []string{"example"}); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "skills", "retired")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("publish preserved an empty retired skill tree: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "skills", "one", "SKILL.md")); err != nil {
 		t.Fatal(err)

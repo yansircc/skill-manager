@@ -49,12 +49,13 @@ const (
 )
 
 type Artifact struct {
-	ProducerID string        `json:"producerId"`
-	SkillID    string        `json:"skillId"`
-	Path       string        `json:"path"`
-	TreeHash   string        `json:"treeHash,omitempty"`
-	State      ArtifactState `json:"state"`
-	Error      string        `json:"error,omitempty"`
+	ProducerID       string        `json:"producerId"`
+	SkillID          string        `json:"skillId"`
+	Path             string        `json:"path"`
+	PreviousTreeHash string        `json:"previousTreeHash,omitempty"`
+	TreeHash         string        `json:"treeHash,omitempty"`
+	State            ArtifactState `json:"state"`
+	Error            string        `json:"error,omitempty"`
 }
 
 type ProducerScan struct {
@@ -303,8 +304,10 @@ func discoverArtifacts(repository string, producer Producer) ([]Artifact, error)
 			artifact.State = ArtifactInvalid
 			artifact.Error = err.Error()
 		case catalogHash == artifact.TreeHash:
+			artifact.PreviousTreeHash = catalogHash
 			artifact.State = ArtifactUnchanged
 		default:
+			artifact.PreviousTreeHash = catalogHash
 			artifact.State = ArtifactUpdated
 		}
 		artifacts = append(artifacts, artifact)

@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 type SkillMetadata struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
+	Name        string            `yaml:"name"`
+	Description string            `yaml:"description"`
+	Executables map[string]string `yaml:"executables"`
 }
 
 func readSkillMetadata(root string) (SkillMetadata, error) {
@@ -41,5 +43,31 @@ func readSkillMetadata(root string) (SkillMetadata, error) {
 	if err := validateID(metadata.Name); err != nil {
 		return SkillMetadata{}, fmt.Errorf("frontmatter name: %w", err)
 	}
+	for command, relative := range metadata.Executables {
+		if err := validateID(command); err != nil {
+			return SkillMetadata{}, fmt.Errorf("frontmatter executable %q: %w", command, err)
+		}
+		if relative == "" || filepath.IsAbs(relative) {
+			return SkillMetadata{}, fmt.Errorf("frontmatter executable %q path must be relative", command)
+		}
+		clean := filepath.Clean(relative)
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return SkillMetadata{}, fmt.Errorf("frontmatter executable %q path escapes the skill", command)
+		}
+		metadata.Executables[command] = clean
+	}
 	return metadata, nil
+}
+
+func readOptionalSkillMetadata(root string) (SkillMetadata, bool, error) {
+	data, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
+	if err != nil {
+		return SkillMetadata{}, false, err
+	}
+	lines := bytes.Split(data, []byte("\n"))
+	if len(lines) == 0 || string(bytes.TrimSpace(lines[0])) != "---" {
+		return SkillMetadata{}, false, nil
+	}
+	metadata, err := readSkillMetadata(root)
+	return metadata, err == nil, err
 }

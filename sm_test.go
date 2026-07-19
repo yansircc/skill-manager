@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -295,10 +296,188 @@ func TestCodexVerifyUsesRuntimeDiscoveryProjection(t *testing.T) {
 	}
 
 	listCodexSkills = func(string) ([]CodexSkill, error) {
+		return []CodexSkill{
+			{Name: "alpha", Path: filepath.Join(result.Generation, "alpha", "SKILL.md"), Scope: "user", Enabled: true},
+			{Name: "foreign", Path: filepath.Join(t.TempDir(), "foreign", "SKILL.md"), Scope: "repo", Enabled: true},
+		}, nil
+	}
+	verification, err := VerifyMode(repo, "HEAD", "codex.global", cache, false)
+	if err != nil || len(verification.ExternalSkills) != 1 {
+		t.Fatalf("VerifyMode = %#v, %v, want one external skill warning", verification, err)
+	}
+	if _, err := VerifyMode(repo, "HEAD", "codex.global", cache, true); err == nil || !strings.Contains(err.Error(), "outside the SSOT") {
+		t.Fatalf("closed VerifyMode error = %v, want Codex closure failure", err)
+	}
+
+	listCodexSkills = func(string) ([]CodexSkill, error) {
 		return []CodexSkill{{Name: "foreign", Path: filepath.Join(t.TempDir(), "foreign", "SKILL.md"), Scope: "repo", Enabled: true}}, nil
 	}
-	if _, err := Verify(repo, "HEAD", "codex.global", cache); err == nil || !strings.Contains(err.Error(), "outside the SSOT") {
-		t.Fatalf("Verify error = %v, want Codex closure failure", err)
+	if _, err := Verify(repo, "HEAD", "codex.global", cache); err == nil || !strings.Contains(err.Error(), "missing from Codex discovery") {
+		t.Fatalf("Verify error = %v, want missing managed skill failure", err)
+	}
+}
+
+func TestExecutableProjectionFollowsActiveGeneration(t *testing.T) {
+	repo := newTestRepository(t)
+	target := filepath.Join(t.TempDir(), "skills")
+	executablesTarget := filepath.Join(t.TempDir(), "bin")
+	cache := filepath.Join(t.TempDir(), "cache")
+	t.Cleanup(func() { _ = makeWritable(cache) })
+	t.Setenv("PATH", executablesTarget+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeExecutableSkill(t, repo, "alpha", "alpha", "v1")
+	writeConsumer(t, repo, "codex.global", Consumer{
+		Adapter: "directory", Target: target, ExecutablesTarget: executablesTarget, Skills: []string{"alpha"},
+	})
+	commitAll(t, repo, "v1")
+	first, err := Apply(repo, "HEAD", "codex.global", cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCommandOutput(t, filepath.Join(executablesTarget, "alpha"), "v1")
+	if _, err := Verify(repo, "HEAD", "codex.global", cache); err != nil {
+		t.Fatal(err)
+	}
+
+	projectedInfo, err := os.Stat(filepath.Join(first.Generation, executablesDir, "alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceInfo, err := os.Stat(filepath.Join(first.Generation, "alpha", "bin", "alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(projectedInfo, sourceInfo) {
+		t.Fatal("generation command is not derived from the skill executable inode")
+	}
+
+	writeExecutableSkill(t, repo, "alpha", "alpha", "v2")
+	commitAll(t, repo, "v2")
+	second, err := Apply(repo, "HEAD", "codex.global", cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Generation == second.Generation {
+		t.Fatal("executable update reused the old generation")
+	}
+	assertCommandOutput(t, filepath.Join(executablesTarget, "alpha"), "v2")
+}
+
+func TestBuildRejectsExecutableNameCollision(t *testing.T) {
+	repo := newTestRepository(t)
+	cache := filepath.Join(t.TempDir(), "cache")
+	t.Cleanup(func() { _ = makeWritable(cache) })
+	writeExecutableSkill(t, repo, "alpha", "shared", "alpha")
+	writeExecutableSkill(t, repo, "beta", "shared", "beta")
+	writeConsumer(t, repo, "pi.global", Consumer{Adapter: "pi", Skills: []string{"alpha", "beta"}})
+	commitAll(t, repo, "collision")
+	if _, err := Build(repo, "HEAD", "pi.global", cache); err == nil || !strings.Contains(err.Error(), "declared by both") {
+		t.Fatalf("Build error = %v, want executable collision", err)
+	}
+}
+
+func TestApplyRequiresExecutableTargetForPersistentConsumer(t *testing.T) {
+	repo := newTestRepository(t)
+	cache := filepath.Join(t.TempDir(), "cache")
+	t.Cleanup(func() { _ = makeWritable(cache) })
+	writeExecutableSkill(t, repo, "alpha", "alpha", "ok")
+	writeConsumer(t, repo, "codex.global", Consumer{Adapter: "directory", Target: filepath.Join(t.TempDir(), "skills"), Skills: []string{"alpha"}})
+	commitAll(t, repo, "missing executable target")
+	if _, err := Apply(repo, "HEAD", "codex.global", cache); err == nil || !strings.Contains(err.Error(), "has no executablesTarget") {
+		t.Fatalf("Apply error = %v, want missing executablesTarget", err)
+	}
+}
+
+func TestApplyRemovesRevokedExecutableLauncher(t *testing.T) {
+	repo := newTestRepository(t)
+	target := filepath.Join(t.TempDir(), "skills")
+	executablesTarget := filepath.Join(t.TempDir(), "bin")
+	cache := filepath.Join(t.TempDir(), "cache")
+	t.Cleanup(func() { _ = makeWritable(cache) })
+	t.Setenv("PATH", executablesTarget+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeExecutableSkill(t, repo, "alpha", "alpha", "ok")
+	writeConsumer(t, repo, "codex.global", Consumer{Adapter: "directory", Target: target, ExecutablesTarget: executablesTarget, Skills: []string{"alpha"}})
+	commitAll(t, repo, "grant")
+	if _, err := Apply(repo, "HEAD", "codex.global", cache); err != nil {
+		t.Fatal(err)
+	}
+	launcher := executableLauncherPath(executablesTarget, "alpha")
+	writeConsumer(t, repo, "codex.global", Consumer{Adapter: "directory", Target: target})
+	commitAll(t, repo, "revoke")
+	if _, err := Apply(repo, "HEAD", "codex.global", cache); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{launcher, executableMetadataPath(launcher)} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("revoked executable projection remains at %s: %v", path, err)
+		}
+	}
+}
+
+func TestAgentCommandPrependsGenerationExecutables(t *testing.T) {
+	repo := newTestRepository(t)
+	cache := filepath.Join(t.TempDir(), "cache")
+	t.Cleanup(func() { _ = makeWritable(cache) })
+	writeExecutableSkill(t, repo, "alpha", "alpha", "ok")
+	writeConsumer(t, repo, "pi.global", Consumer{Adapter: "pi", Skills: []string{"alpha"}})
+	commitAll(t, repo, "executable")
+	originalExecutable := findExecutable
+	findExecutable = func(string) (string, error) { return "/usr/bin/true", nil }
+	t.Cleanup(func() { findExecutable = originalExecutable })
+	result, command, err := AgentCommand(repo, "HEAD", "pi.global", cache, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "PATH=" + filepath.Join(result.Generation, executablesDir) + string(os.PathListSeparator)
+	if !environmentContains(command.Env, want) {
+		t.Fatalf("command PATH does not start with generation executables: %#v", command.Env)
+	}
+}
+
+func TestManagedExecutableCLIEndToEnd(t *testing.T) {
+	repo := newTestRepository(t)
+	target := filepath.Join(t.TempDir(), "skills")
+	executablesTarget := filepath.Join(t.TempDir(), "bin")
+	cache := filepath.Join(t.TempDir(), "cache")
+	t.Cleanup(func() { _ = makeWritable(cache) })
+	binary := filepath.Join(t.TempDir(), "sm")
+	writeExecutableSkill(t, repo, "alpha", "alpha", "native-launcher")
+	writeConsumer(t, repo, "codex.global", Consumer{
+		Adapter: "directory", Target: target, ExecutablesTarget: executablesTarget, Skills: []string{"alpha"},
+	})
+	commitAll(t, repo, "native launcher")
+
+	build := exec.Command("go", "build", "-o", binary, "./cmd/sm")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build sm: %v\n%s", err, output)
+	}
+	apply := exec.Command(binary, "apply", "--repo", repo, "--cache", cache, "codex.global")
+	if output, err := apply.CombinedOutput(); err != nil {
+		t.Fatalf("apply: %v\n%s", err, output)
+	}
+	launcher := executableLauncherPath(executablesTarget, "alpha")
+	command := exec.Command(launcher)
+	if output, err := command.CombinedOutput(); err != nil || string(output) != "native-launcher" {
+		t.Fatalf("managed launcher output = %q, error = %v", output, err)
+	}
+	verify := exec.Command(binary, "verify", "--repo", repo, "--cache", cache, "codex.global")
+	verify.Env = replaceEnvironment(os.Environ(), "PATH", executablesTarget+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if output, err := verify.CombinedOutput(); err != nil {
+		t.Fatalf("verify: %v\n%s", err, output)
+	}
+	launcherInfo, err := os.Stat(launcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := fileSHA256(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcherInfo, err := os.Stat(executableDispatcherPath(executablesTarget, hash))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(launcherInfo, dispatcherInfo) {
+		t.Fatal("managed command is not linked to the shared native dispatcher")
 	}
 }
 
@@ -422,6 +601,30 @@ func writeSkill(t *testing.T, repo, id, content string) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(directory, "SKILL.md"), content)
+}
+
+func writeExecutableSkill(t *testing.T, repo, id, command, output string) {
+	t.Helper()
+	root := filepath.Join(repo, "skills", id)
+	writeFile(t, filepath.Join(root, "SKILL.md"), "---\nname: "+id+"\ndescription: executable test\nexecutables:\n  "+command+": bin/"+command+"\n---\n")
+	path := filepath.Join(root, "bin", command)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf "+output), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertCommandOutput(t *testing.T, path, want string) {
+	t.Helper()
+	var output strings.Builder
+	if err := RunManagedExecutable(path, nil, nil, &output, nil); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != want {
+		t.Fatalf("command output = %q, want %q", output.String(), want)
+	}
 }
 
 func writeConsumer(t *testing.T, repo, name string, consumer Consumer) {

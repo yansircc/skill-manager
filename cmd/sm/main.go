@@ -13,7 +13,21 @@ var version = "dev"
 
 func main() {
 	skillmanager.Version = version
-	if err := skillmanager.RunCLI(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	executable, executableErr := os.Executable()
+	var err error
+	if executableErr != nil {
+		err = executableErr
+	} else {
+		managed, detectErr := skillmanager.DetectManagedExecutableInvocation(executable)
+		if detectErr != nil {
+			err = detectErr
+		} else if managed {
+			err = skillmanager.RunManagedExecutable(executable, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+		} else {
+			err = skillmanager.RunCLI(os.Args[1:], os.Stdout, os.Stderr)
+		}
+	}
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}

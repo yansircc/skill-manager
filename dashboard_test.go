@@ -3,6 +3,7 @@ package skillmanager
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -146,6 +147,43 @@ func TestProducerPublishIsAtomicForOwnedSkillSet(t *testing.T) {
 	}
 	if metadata.Description != "new one" {
 		t.Fatalf("partial update escaped transaction: %q", metadata.Description)
+	}
+}
+
+func TestUpdateReportCarriesArtifactAndCatalogHandoff(t *testing.T) {
+	repo := newTestRepository(t)
+	producerRoot := t.TempDir()
+	writeNamedSkill(t, filepath.Join(repo, "skills", "alpha"), "alpha", "old")
+	writeNamedSkill(t, filepath.Join(producerRoot, "dist", "alpha"), "alpha", "new")
+	producer := struct {
+		Root    string           `json:"root"`
+		Build   ProducerBuild    `json:"build"`
+		Outputs []ProducerOutput `json:"outputs"`
+		Skills  []string         `json:"skills"`
+	}{producerRoot, ProducerBuild{Argv: []string{"true"}}, []ProducerOutput{{Path: "dist"}}, []string{"alpha"}}
+	data, _ := json.MarshalIndent(producer, "", "  ")
+	writeFile(t, filepath.Join(repo, "producers", "example.json"), string(data))
+	head := commitAll(t, repo, "old catalog")
+
+	report, err := UpdateProducers(repo, []string{"example"}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := report.Producers[0].Artifacts[0]
+	if artifact.PreviousTreeHash == "" || artifact.TreeHash == "" || artifact.PreviousTreeHash == artifact.TreeHash {
+		t.Fatalf("artifact hashes = old %q new %q", artifact.PreviousTreeHash, artifact.TreeHash)
+	}
+	if report.Handoff.Head != head || !report.Handoff.PendingCommit || !report.Handoff.BuildReadsCommittedCatalogOnly {
+		t.Fatalf("handoff = %#v", report.Handoff)
+	}
+	if len(report.Handoff.ChangedFiles) != 1 || report.Handoff.ChangedFiles[0] != "skills/alpha/SKILL.md" {
+		t.Fatalf("changed files = %#v", report.Handoff.ChangedFiles)
+	}
+	if len(report.Handoff.NextCommand) == 0 {
+		t.Fatal("handoff omitted next command")
+	}
+	if len(report.Sources) != 1 || report.Sources[0].Git {
+		t.Fatalf("non-Git Producer source = %#v", report.Sources)
 	}
 }
 

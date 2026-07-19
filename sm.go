@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -18,30 +19,41 @@ import (
 )
 
 const (
-	compilerProtocol = "directory-v1"
+	compilerProtocol = "directory-v2"
 	markerName       = ".sm-projection.json"
+	executablesDir   = ".sm-bin"
+	shimProtocol     = "sm-executable-v1"
 )
 
 type Consumer struct {
-	Adapter string   `json:"adapter"`
-	Target  string   `json:"target"`
-	Skills  []string `json:"skills"`
+	Adapter           string   `json:"adapter"`
+	Target            string   `json:"target"`
+	ExecutablesTarget string   `json:"executablesTarget,omitempty"`
+	Skills            []string `json:"skills"`
 }
 
 type Marker struct {
-	Schema   int    `json:"schema"`
-	Commit   string `json:"commit"`
-	Consumer string `json:"consumer"`
-	Compiler string `json:"compiler"`
-	TreeHash string `json:"treeHash"`
+	Schema            int               `json:"schema"`
+	Commit            string            `json:"commit"`
+	Consumer          string            `json:"consumer"`
+	Compiler          string            `json:"compiler"`
+	TreeHash          string            `json:"treeHash"`
+	ExecutablesTarget string            `json:"executablesTarget,omitempty"`
+	Executables       map[string]string `json:"executables,omitempty"`
 }
 
 type Result struct {
-	Commit     string
-	Consumer   string
-	Adapter    string
-	Generation string
-	Target     string
+	Commit            string
+	Consumer          string
+	Adapter           string
+	Generation        string
+	Target            string
+	ExecutablesTarget string
+}
+
+type Verification struct {
+	Result         Result
+	ExternalSkills []string
 }
 
 type ProcessExitError struct {
@@ -153,7 +165,14 @@ func Build(repo, ref, consumerName, cache string) (Result, error) {
 	}
 	key := generationKey(commit, consumerName, compiler)
 	generation := filepath.Join(cache, "generations", key)
-	expected := Marker{Schema: 1, Commit: commit, Consumer: consumerName, Compiler: compiler}
+	executablesTarget := ""
+	if consumer.ExecutablesTarget != "" {
+		executablesTarget, err = expandHome(consumer.ExecutablesTarget)
+		if err != nil {
+			return Result{}, err
+		}
+	}
+	expected := Marker{Schema: 1, Commit: commit, Consumer: consumerName, Compiler: compiler, ExecutablesTarget: executablesTarget}
 
 	if _, err := os.Lstat(generation); err == nil {
 		if err := validateGeneration(generation, expected); err != nil {
@@ -183,9 +202,17 @@ func Build(repo, ref, consumerName, cache string) (Result, error) {
 	if err := extractSkills(root, commit, consumer.Skills, tmp); err != nil {
 		return Result{}, err
 	}
+	if err := prepareExecutableProjection(tmp, consumer.Skills); err != nil {
+		return Result{}, err
+	}
 	if err := prepareAdapterArtifact(tmp, consumerName, consumer); err != nil {
 		return Result{}, err
 	}
+	executableHashes, err := hashExecutableProjection(tmp)
+	if err != nil {
+		return Result{}, err
+	}
+	expected.Executables = executableHashes
 	treeHash, err := hashTree(tmp)
 	if err != nil {
 		return Result{}, err
@@ -222,77 +249,129 @@ func Apply(repo, ref, consumerName, cache string) (Result, error) {
 	if built.Adapter != "directory" && built.Adapter != "codex" {
 		return Result{}, fmt.Errorf("consumer %q uses %s activation; use sm exec", consumerName, built.Adapter)
 	}
+	previousExecutablesTarget, err := activeExecutablesTarget(built.Target, built.Consumer)
+	if err != nil {
+		return Result{}, err
+	}
+	retired, err := prepareExecutableShims(built)
+	if err != nil {
+		return Result{}, err
+	}
+	if previousExecutablesTarget != "" && previousExecutablesTarget != built.ExecutablesTarget {
+		previous := Result{Consumer: built.Consumer, ExecutablesTarget: previousExecutablesTarget}
+		paths, err := retiredExecutableShims(previous, map[string]executableSpec{})
+		if err != nil {
+			return Result{}, err
+		}
+		if err := removeExecutableShims(paths); err != nil {
+			return Result{}, err
+		}
+		if err := removeRetiredExecutableDispatchers(previousExecutablesTarget); err != nil {
+			return Result{}, err
+		}
+	}
 	if err := activate(built.Target, built.Generation, consumerName); err != nil {
+		return Result{}, err
+	}
+	if err := removeExecutableShims(retired); err != nil {
+		return Result{}, err
+	}
+	if err := removeRetiredExecutableDispatchers(built.ExecutablesTarget); err != nil {
 		return Result{}, err
 	}
 	return built, nil
 }
 
 func Verify(repo, ref, consumerName, cache string) (Result, error) {
+	verification, err := VerifyMode(repo, ref, consumerName, cache, false)
+	return verification.Result, err
+}
+
+func VerifyMode(repo, ref, consumerName, cache string, closed bool) (Verification, error) {
 	root, err := repositoryRoot(repo)
 	if err != nil {
-		return Result{}, err
+		return Verification{}, err
 	}
 	commit, err := resolveCommit(root, ref)
 	if err != nil {
-		return Result{}, err
+		return Verification{}, err
 	}
 	consumer, err := loadConsumer(root, commit, consumerName)
 	if err != nil {
-		return Result{}, err
+		return Verification{}, err
 	}
 	cache, err = cacheRoot(cache)
 	if err != nil {
-		return Result{}, err
+		return Verification{}, err
 	}
 	compiler, err := compilerIdentity()
 	if err != nil {
-		return Result{}, err
+		return Verification{}, err
 	}
 	generation := filepath.Join(cache, "generations", generationKey(commit, consumerName, compiler))
-	expected := Marker{Schema: 1, Commit: commit, Consumer: consumerName, Compiler: compiler}
+	executablesTarget := ""
+	if consumer.ExecutablesTarget != "" {
+		executablesTarget, err = expandHome(consumer.ExecutablesTarget)
+		if err != nil {
+			return Verification{}, err
+		}
+	}
+	expected := Marker{Schema: 1, Commit: commit, Consumer: consumerName, Compiler: compiler, ExecutablesTarget: executablesTarget}
 	if err := validateGeneration(generation, expected); err != nil {
-		return Result{}, err
+		return Verification{}, err
 	}
 	if consumer.Adapter != "directory" && consumer.Adapter != "codex" {
-		return Result{}, fmt.Errorf("consumer %q uses ephemeral %s activation; use sm exec", consumerName, consumer.Adapter)
+		return Verification{}, fmt.Errorf("consumer %q uses ephemeral %s activation; use sm exec", consumerName, consumer.Adapter)
 	}
 	target, err := expandHome(consumer.Target)
 	if err != nil {
-		return Result{}, err
+		return Verification{}, err
 	}
 	info, err := os.Lstat(target)
 	if err != nil {
-		return Result{}, fmt.Errorf("inspect target: %w", err)
+		return Verification{}, fmt.Errorf("inspect target: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
-		return Result{}, fmt.Errorf("target is not an sm projection: %s", target)
+		return Verification{}, fmt.Errorf("target is not an sm projection: %s", target)
 	}
 	actual, err := filepath.EvalSymlinks(target)
 	if err != nil {
-		return Result{}, fmt.Errorf("resolve target: %w", err)
+		return Verification{}, fmt.Errorf("resolve target: %w", err)
 	}
 	want, err := filepath.EvalSymlinks(generation)
 	if err != nil {
-		return Result{}, fmt.Errorf("resolve generation: %w", err)
+		return Verification{}, fmt.Errorf("resolve generation: %w", err)
 	}
 	if actual != want {
-		return Result{}, fmt.Errorf("target drift: points to %s, want %s", actual, want)
+		return Verification{}, fmt.Errorf("target drift: points to %s, want %s", actual, want)
 	}
+	verified := result(commit, consumerName, generation, consumer)
+	if err := verifyExecutableShims(verified); err != nil {
+		return Verification{}, err
+	}
+	verification := Verification{Result: verified}
 	if consumer.Adapter == "codex" {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return Result{}, err
+			return Verification{}, err
 		}
 		skills, err := listCodexSkills(cwd)
 		if err != nil {
-			return Result{}, fmt.Errorf("inspect Codex discovery closure: %w", err)
+			return Verification{}, fmt.Errorf("inspect Codex discovery closure: %w", err)
 		}
-		if err := validateCodexClosure(skills, generation); err != nil {
-			return Result{}, err
+		unmanaged, missing, err := codexClosureDiff(skills, generation)
+		if err != nil {
+			return Verification{}, err
 		}
+		if len(missing) != 0 {
+			return Verification{}, codexClosureError(nil, missing)
+		}
+		if closed && len(unmanaged) != 0 {
+			return Verification{}, codexClosureError(unmanaged, nil)
+		}
+		verification.ExternalSkills = unmanaged
 	}
-	return result(commit, consumerName, generation, consumer), nil
+	return verification, nil
 }
 
 func result(commit, consumerName, generation string, consumer Consumer) Result {
@@ -300,7 +379,11 @@ func result(commit, consumerName, generation string, consumer Consumer) Result {
 	if consumer.Target != "" {
 		target, _ = expandHome(consumer.Target)
 	}
-	return Result{Commit: commit, Consumer: consumerName, Adapter: consumer.Adapter, Generation: generation, Target: target}
+	executablesTarget := ""
+	if consumer.ExecutablesTarget != "" {
+		executablesTarget, _ = expandHome(consumer.ExecutablesTarget)
+	}
+	return Result{Commit: commit, Consumer: consumerName, Adapter: consumer.Adapter, Generation: generation, Target: target, ExecutablesTarget: executablesTarget}
 }
 
 func repositoryRoot(location string) (string, error) {
@@ -360,6 +443,14 @@ func validateConsumer(consumer Consumer) error {
 	} else if consumer.Target != "" {
 		return fmt.Errorf("target is invalid for %s adapter", consumer.Adapter)
 	}
+	if consumer.ExecutablesTarget != "" {
+		if consumer.Adapter != "directory" && consumer.Adapter != "codex" {
+			return fmt.Errorf("executablesTarget is invalid for %s adapter", consumer.Adapter)
+		}
+		if consumer.ExecutablesTarget != "~" && !strings.HasPrefix(consumer.ExecutablesTarget, "~/") && !filepath.IsAbs(consumer.ExecutablesTarget) {
+			return fmt.Errorf("executablesTarget must be absolute or start with ~/")
+		}
+	}
 	seen := make(map[string]struct{}, len(consumer.Skills))
 	for _, id := range consumer.Skills {
 		if err := validateID(id); err != nil {
@@ -381,16 +472,27 @@ func AgentCommand(repo, ref, consumerName, cache string, agentArgs []string) (Re
 	if err != nil {
 		return Result{}, nil, err
 	}
+	var result Result
+	var command *exec.Cmd
 	switch built.Adapter {
 	case "pi":
-		return piAgentCommand(built, agentArgs)
+		result, command, err = piAgentCommand(built, agentArgs)
 	case "claude":
-		return claudeAgentCommand(built, agentArgs)
+		result, command, err = claudeAgentCommand(built, agentArgs)
 	case "codex":
-		return codexAgentCommand(built, agentArgs)
+		result, command, err = codexAgentCommand(built, agentArgs)
 	default:
 		return Result{}, nil, fmt.Errorf("consumer %q adapter %q has no exec contract", consumerName, built.Adapter)
 	}
+	if err != nil {
+		return Result{}, nil, err
+	}
+	environment := command.Env
+	if environment == nil {
+		environment = os.Environ()
+	}
+	command.Env = prependPath(environment, filepath.Join(built.Generation, executablesDir))
+	return result, command, nil
 }
 
 func rejectSkillExpansionArguments(arguments []string) error {
@@ -491,7 +593,7 @@ func validateCanonicalSkill(root string) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("SKILL.md is not a regular file")
 	}
-	return filepath.WalkDir(root, func(name string, entry fs.DirEntry, walkErr error) error {
+	if err := filepath.WalkDir(root, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -517,7 +619,17 @@ func validateCanonicalSkill(root string) error {
 			return fmt.Errorf("skill contains nested SKILL.md: %s", name)
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	metadata, present, err := readOptionalSkillMetadata(root)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return nil
+	}
+	return validateDeclaredExecutables(root, metadata)
 }
 
 func extractSkills(repo, commit string, skills []string, destination string) error {
@@ -693,21 +805,16 @@ func validateGeneration(root string, expected Marker) error {
 	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("generation is not a real directory: %s", root)
 	}
-	data, err := os.ReadFile(filepath.Join(root, markerName))
+	actual, err := readGenerationMarker(root)
 	if err != nil {
-		return fmt.Errorf("read projection marker: %w", err)
-	}
-	var actual Marker
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&actual); err != nil {
-		return fmt.Errorf("parse projection marker: %w", err)
+		return err
 	}
 	if expected.Schema != 0 && actual.Schema != expected.Schema ||
 		expected.Commit != "" && actual.Commit != expected.Commit ||
 		expected.Consumer != "" && actual.Consumer != expected.Consumer ||
 		expected.Compiler != "" && actual.Compiler != expected.Compiler ||
-		expected.TreeHash != "" && actual.TreeHash != expected.TreeHash {
+		expected.TreeHash != "" && actual.TreeHash != expected.TreeHash ||
+		expected.Commit != "" && actual.ExecutablesTarget != expected.ExecutablesTarget {
 		return fmt.Errorf("projection marker does not match requested generation")
 	}
 	hash, err := hashTree(root)
@@ -717,7 +824,53 @@ func validateGeneration(root string, expected Marker) error {
 	if hash != actual.TreeHash {
 		return fmt.Errorf("projection content drift: got %s, want %s", hash, actual.TreeHash)
 	}
+	executableHashes, err := hashExecutableProjection(root)
+	if err != nil {
+		return err
+	}
+	if !maps.Equal(executableHashes, actual.Executables) {
+		return fmt.Errorf("projection executable hashes do not match the generation marker")
+	}
 	return assertReadOnly(root)
+}
+
+func readGenerationMarker(root string) (Marker, error) {
+	data, err := os.ReadFile(filepath.Join(root, markerName))
+	if err != nil {
+		return Marker{}, fmt.Errorf("read projection marker: %w", err)
+	}
+	var marker Marker
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&marker); err != nil {
+		return Marker{}, fmt.Errorf("parse projection marker: %w", err)
+	}
+	return marker, nil
+}
+
+func activeExecutablesTarget(target, consumer string) (string, error) {
+	info, err := os.Lstat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return "", nil
+	}
+	generation, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", err
+	}
+	if err := validateGeneration(generation, Marker{Schema: 1, Consumer: consumer}); err != nil {
+		return "", fmt.Errorf("existing active target is not owned by sm: %w", err)
+	}
+	marker, err := readGenerationMarker(generation)
+	if err != nil {
+		return "", err
+	}
+	return marker.ExecutablesTarget, nil
 }
 
 func hashTree(root string) (string, error) {

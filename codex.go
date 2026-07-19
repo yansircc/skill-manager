@@ -215,14 +215,22 @@ func validateActiveTarget(target, generation string) error {
 }
 
 func validateCodexClosure(skills []CodexSkill, generation string) error {
+	unmanaged, missing, err := codexClosureDiff(skills, generation)
+	if err != nil {
+		return err
+	}
+	return codexClosureError(unmanaged, missing)
+}
+
+func codexClosureDiff(skills []CodexSkill, generation string) ([]string, []string, error) {
 	canonicalGeneration, err := filepath.EvalSymlinks(generation)
 	if err != nil {
-		return fmt.Errorf("resolve generation for codex closure: %w", err)
+		return nil, nil, fmt.Errorf("resolve generation for codex closure: %w", err)
 	}
 	expected := make(map[string]string)
 	entries, err := os.ReadDir(canonicalGeneration)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -257,10 +265,17 @@ func validateCodexClosure(skills []CodexSkill, generation string) error {
 		}
 	}
 	if len(unmanaged) == 0 && len(missing) == 0 {
-		return nil
+		return nil, nil, nil
 	}
 	sort.Strings(unmanaged)
 	sort.Strings(missing)
+	return unmanaged, missing, nil
+}
+
+func codexClosureError(unmanaged, missing []string) error {
+	if len(unmanaged) == 0 && len(missing) == 0 {
+		return nil
+	}
 	parts := make([]string, 0, 2)
 	if len(unmanaged) != 0 {
 		parts = append(parts, "enabled skills outside the SSOT generation:\n  "+strings.Join(unmanaged, "\n  "))

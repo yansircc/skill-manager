@@ -5,11 +5,31 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 type PublishReport struct {
-	Producers []ProducerScan `json:"producers"`
+	Producers []ProducerScan   `json:"producers"`
+	Sources   []ProducerSource `json:"sources,omitempty"`
+	Handoff   CatalogHandoff   `json:"handoff"`
+}
+
+type ProducerSource struct {
+	ProducerID   string `json:"producerId"`
+	ObservedHead string `json:"observedHead,omitempty"`
+	Dirty        bool   `json:"dirty"`
+	Git          bool   `json:"git"`
+}
+
+type CatalogHandoff struct {
+	Head                           string   `json:"head"`
+	ChangedFiles                   []string `json:"changedFiles"`
+	PendingCommit                  bool     `json:"pendingCommit"`
+	BuildReadsCommittedCatalogOnly bool     `json:"buildReadsCommittedCatalogOnly"`
+	NextCommand                    []string `json:"nextCommand,omitempty"`
 }
 
 func PublishProducers(repo string, ids []string) (PublishReport, error) {
@@ -85,17 +105,99 @@ func PublishProducers(repo string, ids []string) (PublishReport, error) {
 		_ = os.Rename(retired, catalog)
 		return PublishReport{}, fmt.Errorf("promote catalog: %w", err)
 	}
+	handoff, err := catalogHandoff(root)
+	if err != nil {
+		_ = os.RemoveAll(catalog)
+		_ = os.Rename(retired, catalog)
+		return PublishReport{}, err
+	}
 	if err := os.RemoveAll(retired); err != nil {
 		return PublishReport{}, fmt.Errorf("remove retired catalog: %w", err)
 	}
-	return PublishReport{Producers: report.Producers}, nil
+	return PublishReport{Producers: report.Producers, Handoff: handoff}, nil
 }
 
 func UpdateProducers(repo string, ids []string, stdout, stderr io.Writer) (PublishReport, error) {
 	if err := Produce(repo, ids, stdout, stderr); err != nil {
 		return PublishReport{}, err
 	}
-	return PublishProducers(repo, ids)
+	report, err := PublishProducers(repo, ids)
+	if err != nil {
+		return PublishReport{}, err
+	}
+	for _, producer := range report.Producers {
+		report.Sources = append(report.Sources, observeProducerSource(producer.Producer))
+	}
+	return report, nil
+}
+
+func catalogHandoff(root string) (CatalogHandoff, error) {
+	changedSet := make(map[string]struct{})
+	headOutput, headErr := exec.Command("git", "-C", root, "rev-parse", "--verify", "HEAD^{commit}").Output()
+	head := strings.TrimSpace(string(headOutput))
+	if headErr == nil {
+		output, err := runGit(root, "diff", "--name-only", "HEAD", "--", "skills", "producers", "consumers", ".gitignore")
+		if err != nil {
+			return CatalogHandoff{}, err
+		}
+		for _, name := range strings.Split(strings.TrimSpace(output), "\n") {
+			if name != "" {
+				changedSet[name] = struct{}{}
+			}
+		}
+	} else {
+		tracked, err := runGit(root, "ls-files", "--", "skills", "producers", "consumers", ".gitignore")
+		if err != nil {
+			return CatalogHandoff{}, err
+		}
+		for _, name := range strings.Split(strings.TrimSpace(tracked), "\n") {
+			if name != "" {
+				changedSet[name] = struct{}{}
+			}
+		}
+	}
+	untracked, err := runGit(root, "ls-files", "--others", "--exclude-standard", "--", "skills", "producers", "consumers", ".gitignore")
+	if err != nil {
+		return CatalogHandoff{}, err
+	}
+	for _, name := range strings.Split(strings.TrimSpace(untracked), "\n") {
+		if name != "" {
+			changedSet[name] = struct{}{}
+		}
+	}
+	changed := make([]string, 0, len(changedSet))
+	for name := range changedSet {
+		changed = append(changed, name)
+	}
+	sort.Strings(changed)
+	handoff := CatalogHandoff{
+		Head:                           head,
+		ChangedFiles:                   changed,
+		PendingCommit:                  len(changed) != 0,
+		BuildReadsCommittedCatalogOnly: true,
+	}
+	if handoff.PendingCommit {
+		handoff.NextCommand = []string{"git", "-C", root, "status", "--short", "--", "skills", "producers", "consumers", ".gitignore"}
+	}
+	return handoff, nil
+}
+
+func observeProducerSource(producer Producer) ProducerSource {
+	source := ProducerSource{ProducerID: producer.ID}
+	command := exec.Command("git", "-C", producer.Root, "rev-parse", "--show-toplevel")
+	if err := command.Run(); err != nil {
+		return source
+	}
+	source.Git = true
+	if output, err := exec.Command("git", "-C", producer.Root, "rev-parse", "HEAD").Output(); err == nil {
+		source.ObservedHead = strings.TrimSpace(string(output))
+	}
+	if output, err := exec.Command("git", "-C", producer.Root, "status", "--porcelain", "--untracked-files=normal").Output(); err == nil {
+		source.Dirty = strings.TrimSpace(string(output)) != ""
+	} else {
+		source.Dirty = true
+	}
+	return source
 }
 
 func lockRepository(root string) (*os.File, error) {

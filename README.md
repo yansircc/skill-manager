@@ -106,15 +106,40 @@ Producer ownership is explicit:
 
 The build command runs with `root` as its working directory. Outputs must remain outside the catalog. The emitted `SKILL.md` name must match the declared skill ID. When `note` is present, the Dashboard list shows it instead of the Skill description; the Skill artifact remains unchanged.
 
+A Skill that invokes a bundled executable declares the command once in its
+frontmatter:
+
+```yaml
+---
+name: example
+description: Example Skill
+executables:
+  example: bin/example
+---
+```
+
+Paths are relative to the Skill root. Declared files must be regular executable
+files, and command names must be unique across a consumer. `sm build` derives a
+generation-local command projection from those declarations.
+
 A consumer is an allowlist:
 
 ```json
 {
   "adapter": "codex",
   "target": "~/.agents/skills",
+  "executablesTarget": "~/.local/bin",
   "skills": ["example"]
 }
 ```
+
+`executablesTarget` is required for a persistent consumer that authorizes a
+Skill with executables. `sm apply` writes native managed launchers there. Each
+launcher resolves through the active Skill target, so switching the Skill
+generation also switches the executable; it never reads a separately installed
+binary. The target directory must already be on the Agent process's `PATH`.
+Ephemeral `sm exec` invocations prepend the generation-local command projection
+to `PATH` and do not use `executablesTarget`.
 
 Supported adapters:
 
@@ -131,8 +156,7 @@ Supported adapters:
 # Producers
 sm producers --repo ~/.sm
 sm producer relocate --repo ~/.sm <producer> <new-root>
-sm scan --repo ~/.sm --json
-sm produce --repo ~/.sm <producer>
+sm scan --repo ~/.sm --json <producer>
 sm publish --repo ~/.sm <producer>
 sm update --repo ~/.sm <producer>
 
@@ -140,6 +164,7 @@ sm update --repo ~/.sm <producer>
 sm build --repo ~/.sm <consumer>
 sm apply --repo ~/.sm <consumer>
 sm verify --repo ~/.sm <consumer>
+sm verify --repo ~/.sm --closed <consumer>
 sm exec --repo ~/.sm <consumer> -- <agent arguments...>
 
 # UI
@@ -149,9 +174,23 @@ sm dashboard --repo ~/.sm --listen 127.0.0.1:7777
 
 `producer relocate` handles a moved Producer checkout. It requires a clean SSOT, runs the existing build in the new root, validates the complete declared Skill set, and commits only the Producer locator. It does not change the catalog or Agent generations; run `update` separately when the artifact should change.
 
-`scan` is read-only. `produce` only runs the configured Producer command. `publish` validates the complete owned artifact set and atomically replaces it in the catalog. `update` composes `produce -> scan -> publish`.
+`scan` is read-only and should be scoped to the Producer being changed; omit the
+Producer only for a fleet audit. `produce` only runs the configured Producer
+command. `publish` validates the complete owned artifact set and atomically
+replaces it in the catalog. `update` composes `produce -> scan -> publish` and
+prints old/new artifact hashes, observed Producer Git state, changed catalog
+files, and the review handoff. A dirty Producer HEAD is reported as observed
+state, not claimed as artifact provenance.
 
-`build`, `apply`, `verify`, and `exec` read a Git commit, not uncommitted working-tree state.
+`build`, `apply`, `verify`, and `exec` read a Git commit, not uncommitted
+working-tree state. When `update` reports `pendingCommit=true`, review and commit
+the catalog before building; otherwise build still reads the previous HEAD.
+
+`verify` proves the managed generation, active targets, command resolution, and
+presence of every authorized Skill. Extra non-system Codex Skills are reported
+as warnings. `verify --closed` additionally requires the complete non-system
+discovery surface to equal the committed consumer projection. `exec` constructs
+and reprobes a closed profile before starting the Agent.
 
 ## Trust and security
 

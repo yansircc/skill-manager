@@ -25,10 +25,11 @@ Producer repo -> external artifact -> ~/.sm/skills -> consumer generation -> Age
 ```sh
 git -C ~/.sm status --short
 sm producers --repo ~/.sm
-sm scan --repo ~/.sm --json
+sm scan --repo ~/.sm --json <producer-id>
 ```
 
 Treat `new`, `updated`, `conflict`, and `invalid` as distinct facts. Do not publish through conflicts or invalid artifacts.
+Omit `<producer-id>` only for an explicitly requested fleet audit.
 
 ## Relocate a Producer
 
@@ -54,6 +55,10 @@ git -C ~/.sm commit -m "Update <producer-id> skill artifact"
 ```
 
 `sm update` is exactly `produce -> scan -> atomic publish`. A failure must leave the whole catalog unchanged.
+Read its handoff as state: old/new artifact hashes, observed Producer HEAD and
+dirty flag, changed catalog files, and the next review command. When
+`pendingCommit=true`, `sm build` still reads the previous catalog HEAD; review
+and commit before building.
 
 ## Manage Agent access
 
@@ -79,10 +84,18 @@ For CLI projection work:
 sm build --repo ~/.sm <consumer-id>
 sm apply --repo ~/.sm <consumer-id>
 sm verify --repo ~/.sm <consumer-id>
+sm verify --repo ~/.sm --closed <consumer-id>
 sm exec --repo ~/.sm <consumer-id> -- <agent-arguments...>
 ```
 
-Codex may have platform or plugin skills outside the persistent target. In that case, use `sm exec` to derive and verify the closed execution profile; do not delete external plugins merely to make persistent `verify` pass.
+`verify` requires every managed Skill and executable projection to be present;
+it reports external Codex Skills without failing. Use `verify --closed` when the
+persistent discovery surface itself must equal the SSOT. Use `sm exec` to derive
+and prove a closed execution profile without deleting platform or plugin Skills.
+
+If a Skill declares `executables` in its frontmatter, persistent consumers must
+declare an `executablesTarget` directory already present on the Agent process's
+`PATH`. Never install a second copy with the Producer's `make install` target.
 
 ## Add a Producer
 

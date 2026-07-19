@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strconv"
+	"strings"
 )
 
 var Version = "dev"
@@ -162,6 +164,24 @@ func RunCLI(args []string, stdout, stderr io.Writer) error {
 		}
 		for _, producer := range report.Producers {
 			fmt.Fprintf(stdout, "%s\tpublished\n", producer.Producer.ID)
+			for _, artifact := range producer.Artifacts {
+				fmt.Fprintf(stdout, "skill\t%s\t%s -> %s\n", artifact.SkillID, emptyHash(artifact.PreviousTreeHash), artifact.TreeHash)
+			}
+		}
+		for _, source := range report.Sources {
+			if source.Git {
+				fmt.Fprintf(stdout, "source\t%s\thead=%s dirty=%t\n", source.ProducerID, source.ObservedHead, source.Dirty)
+			} else {
+				fmt.Fprintf(stdout, "source\t%s\tnon-git\n", source.ProducerID)
+			}
+		}
+		fmt.Fprintf(stdout, "catalog\thead=%s pendingCommit=%t\n", report.Handoff.Head, report.Handoff.PendingCommit)
+		for _, name := range report.Handoff.ChangedFiles {
+			fmt.Fprintf(stdout, "changed\t%s\n", name)
+		}
+		if report.Handoff.PendingCommit {
+			fmt.Fprintln(stdout, "handoff\tbuild reads committed catalog only; review and commit these changes first")
+			fmt.Fprintf(stdout, "next\t%s\n", formatArgv(report.Handoff.NextCommand))
 		}
 		return nil
 
@@ -170,6 +190,10 @@ func RunCLI(args []string, stdout, stderr io.Writer) error {
 		repo := fs.String("repo", ".", "SSOT repository")
 		ref := fs.String("ref", "HEAD", "published Git commit")
 		cache := fs.String("cache", "", "generation cache; defaults to ~/.cache/sm")
+		closed := false
+		if args[0] == "verify" {
+			fs.BoolVar(&closed, "closed", false, "require the complete discovery surface to match the SSOT")
+		}
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -202,10 +226,14 @@ func RunCLI(args []string, stdout, stderr io.Writer) error {
 			}
 			return nil
 		default:
-			result, err := Verify(*repo, *ref, consumer, *cache)
+			verification, err := VerifyMode(*repo, *ref, consumer, *cache, closed)
 			if err != nil {
 				return err
 			}
+			for _, external := range verification.ExternalSkills {
+				fmt.Fprintf(stderr, "warning: external Codex skill: %s\n", external)
+			}
+			result := verification.Result
 			fmt.Fprintf(stdout, "verified %s at %s\n", result.Consumer, result.Commit)
 			return nil
 		}
@@ -219,6 +247,21 @@ func RunCLI(args []string, stdout, stderr io.Writer) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func emptyHash(hash string) string {
+	if hash == "" {
+		return "<none>"
+	}
+	return hash
+}
+
+func formatArgv(argv []string) string {
+	quoted := make([]string, len(argv))
+	for index, argument := range argv {
+		quoted[index] = strconv.Quote(argument)
+	}
+	return strings.Join(quoted, " ")
 }
 
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
@@ -242,7 +285,7 @@ Usage:
   sm init [path]
   sm build [--repo path] [--ref commit] consumer
   sm apply [--repo path] [--ref commit] consumer
-  sm verify [--repo path] [--ref commit] consumer
+  sm verify [--repo path] [--ref commit] [--closed] consumer
   sm exec [--repo path] [--ref commit] consumer [-- agent arguments...]
   sm version`)
 }

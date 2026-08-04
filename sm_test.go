@@ -606,7 +606,7 @@ func writeSkill(t *testing.T, repo, id, content string) {
 func writeExecutableSkill(t *testing.T, repo, id, command, output string) {
 	t.Helper()
 	root := filepath.Join(repo, "skills", id)
-	writeFile(t, filepath.Join(root, "SKILL.md"), "---\nname: "+id+"\ndescription: executable test\nexecutables:\n  "+command+": bin/"+command+"\n---\n")
+	writeFile(t, filepath.Join(root, "SKILL.md"), "---\nname: "+id+"\ndescription: executable test\nexecutables:\n  "+command+":\n    any: bin/"+command+"\n---\n")
 	path := filepath.Join(root, "bin", command)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)

@@ -31,17 +31,19 @@ type executableShimMarker struct {
 const executableMetadataSuffix = ".sm-executable.json"
 
 func validateDeclaredExecutables(root string, metadata SkillMetadata) error {
-	for command, relative := range metadata.Executables {
-		path := filepath.Join(root, relative)
-		if !within(root, path) {
-			return fmt.Errorf("executable %q path escapes the skill", command)
-		}
-		info, err := os.Lstat(path)
-		if err != nil {
-			return fmt.Errorf("executable %q: %w", command, err)
-		}
-		if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
-			return fmt.Errorf("executable %q is not an executable regular file: %s", command, relative)
+	for command, declaration := range metadata.Executables {
+		for platform, relative := range declaration {
+			path := filepath.Join(root, relative)
+			if !within(root, path) {
+				return fmt.Errorf("executable %q platform %q path escapes the skill", command, platform)
+			}
+			info, err := os.Lstat(path)
+			if err != nil {
+				return fmt.Errorf("executable %q platform %q: %w", command, platform, err)
+			}
+			if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+				return fmt.Errorf("executable %q platform %q is not an executable regular file: %s", command, platform, relative)
+			}
 		}
 	}
 	return nil
@@ -67,6 +69,10 @@ func prepareExecutableProjection(root string, skills []string) error {
 		}
 		sort.Strings(commands)
 		for _, command := range commands {
+			relative, err := resolveExecutablePath(metadata.Executables[command], runtime.GOOS, runtime.GOARCH)
+			if err != nil {
+				return fmt.Errorf("skill %q executable %q %w", skill, command, err)
+			}
 			key := executableCommandKey(command)
 			if owner, exists := owners[key]; exists {
 				return fmt.Errorf("executable %q is declared by both %s and %s", command, owner, skill)
@@ -76,7 +82,7 @@ func prepareExecutableProjection(root string, skills []string) error {
 			if err := os.MkdirAll(directory, 0o755); err != nil {
 				return err
 			}
-			if err := os.Link(filepath.Join(skillRoot, metadata.Executables[command]), filepath.Join(directory, command)); err != nil {
+			if err := os.Link(filepath.Join(skillRoot, relative), filepath.Join(directory, command)); err != nil {
 				return fmt.Errorf("project executable %q from skill %q: %w", command, skill, err)
 			}
 		}
@@ -107,7 +113,11 @@ func generationExecutables(generation string) (map[string]executableSpec, error)
 		if !present {
 			continue
 		}
-		for command, relative := range metadata.Executables {
+		for command, declaration := range metadata.Executables {
+			relative, err := resolveExecutablePath(declaration, runtime.GOOS, runtime.GOARCH)
+			if err != nil {
+				return nil, fmt.Errorf("skill %q executable %q %w", entry.Name(), command, err)
+			}
 			key := executableCommandKey(command)
 			if existing, exists := result[key]; exists {
 				return nil, fmt.Errorf("duplicate projected executable %q conflicts with skill %q", command, existing.SkillID)

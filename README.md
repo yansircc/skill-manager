@@ -10,6 +10,7 @@
 Producer repository ──build──> external artifact
 external artifact ──publish──> ~/.sm/skills
 committed Git tree ──build──> immutable generation ──activate──> Agent
+committed Git tree ──export──> private publication repo ──build──> machine-local generation
 ```
 
 The editable truth lives in one place. Producer outputs cannot become Agent discovery roots, and consumers are built only from committed catalog state.
@@ -114,13 +115,20 @@ frontmatter:
 name: example
 description: Example Skill
 executables:
-  example: bin/example
+  example:
+    darwin-arm64: bin/example-darwin-arm64
+    linux-amd64: bin/example-linux-amd64
+    linux-arm64: bin/example-linux-arm64
 ---
 ```
 
-Paths are relative to the Skill root. Declared files must be regular executable
-files, and command names must be unique across a consumer. `sm build` derives a
-generation-local command projection from those declarations.
+Paths are relative to the Skill root. Use `any` instead of a platform key only
+for a genuinely portable executable such as a script. Every declared file must
+be a regular executable, and command names must be unique across a consumer.
+`sm build` selects the exact `GOOS-GOARCH` artifact, then `any`; if neither is
+declared it fails closed. It derives a generation-local command projection from
+that selection. The former scalar form (`example: bin/example`) is rejected;
+Producers must publish the platform map before upgrading SM.
 
 A consumer is an allowlist:
 
@@ -160,6 +168,13 @@ sm scan --repo ~/.sm --json <producer>
 sm publish --repo ~/.sm <producer>
 sm update --repo ~/.sm <producer>
 
+# Cross-machine publication closure
+sm export --repo ~/.sm --ref HEAD \
+  --consumer codex.global \
+  --consumer pi.global \
+  --consumer claude.global \
+  --output /path/to/private-publication
+
 # Consumers
 sm build --repo ~/.sm <consumer>
 sm apply --repo ~/.sm <consumer>
@@ -171,6 +186,15 @@ sm exec --repo ~/.sm <consumer> -- <agent arguments...>
 sm open --repo ~/.sm
 sm dashboard --repo ~/.sm --listen 127.0.0.1:7777
 ```
+
+`sm export` reads only the selected committed Git ref and emits the exact union
+of the selected consumer allowlists: `skills/`, `consumers/`, and
+`.sm-publication.json`. It never exports Producers, generation caches,
+launchers, or expanded machine-local paths. The output directory must be new or
+empty. Commit and push that derived tree to a private repository; on each target
+machine, check out the exact publication commit and run the existing `sm build`,
+`sm apply`, or `sm exec` flow. The publication branch discovers updates, while
+the publication commit identifies the executed input.
 
 `producer relocate` handles a moved Producer checkout. It requires a clean SSOT, runs the existing build in the new root, validates the complete declared Skill set, and commits only the Producer locator. It does not change the catalog or Agent generations; run `update` separately when the artifact should change.
 

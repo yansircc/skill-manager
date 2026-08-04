@@ -189,16 +189,15 @@ func RunCLI(args []string, stdout, stderr io.Writer) error {
 		fs := newFlagSet("export", stderr)
 		repo := fs.String("repo", ".", "SSOT repository")
 		ref := fs.String("ref", "HEAD", "published Git commit")
+		distribution := fs.String("distribution", "", "committed distribution name")
 		output := fs.String("output", "", "new or empty publication directory")
-		var consumers stringListFlag
-		fs.Var(&consumers, "consumer", "consumer to include; repeat for multiple consumers")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		if fs.NArg() != 0 || *output == "" || len(consumers) == 0 {
-			return fmt.Errorf("usage: sm export [--repo path] [--ref commit] --consumer name... --output directory")
+		if fs.NArg() != 0 || *output == "" || *distribution == "" {
+			return fmt.Errorf("usage: sm export [--repo path] [--ref commit] --distribution name --output directory")
 		}
-		manifest, err := Export(*repo, *ref, *output, consumers)
+		manifest, err := Export(*repo, *ref, *output, *distribution)
 		if err != nil {
 			return err
 		}
@@ -290,17 +289,6 @@ func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
 	return fs
 }
 
-type stringListFlag []string
-
-func (values *stringListFlag) String() string {
-	return strings.Join(*values, ",")
-}
-
-func (values *stringListFlag) Set(value string) error {
-	*values = append(*values, value)
-	return nil
-}
-
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `sm compiles an immutable Agent skill projection from a Git SSOT.
 
@@ -314,7 +302,7 @@ Usage:
   sm publish [--repo path] [--json] producer...
   sm update [--repo path] [--json] producer...
   sm init [path]
-  sm export [--repo path] [--ref commit] --consumer name... --output directory
+  sm export [--repo path] [--ref commit] --distribution name --output directory
   sm build [--repo path] [--ref commit] consumer
   sm apply [--repo path] [--ref commit] consumer
   sm verify [--repo path] [--ref commit] [--closed] consumer

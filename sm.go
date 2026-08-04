@@ -78,6 +78,9 @@ func Init(location string) (string, error) {
 	if err := os.MkdirAll(filepath.Join(root, "producers"), 0o755); err != nil {
 		return "", fmt.Errorf("create producers directory: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "distributions"), 0o755); err != nil {
+		return "", fmt.Errorf("create distributions directory: %w", err)
+	}
 	ignore := filepath.Join(root, ".gitignore")
 	if _, err := os.Stat(ignore); errors.Is(err, os.ErrNotExist) {
 		if err := os.WriteFile(ignore, []byte(".DS_Store\n.lock\n"), 0o644); err != nil {

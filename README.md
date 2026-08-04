@@ -90,6 +90,8 @@ The Dashboard can register Producers, publish updates, grant skills to consumers
 │   └── example/SKILL.md
 ├── consumers/
 │   └── codex.global.json
+├── distributions/
+│   └── portable-agents.json
 └── .git/
 ```
 
@@ -141,6 +143,19 @@ A consumer is an allowlist:
 }
 ```
 
+A distribution selects committed consumers and declares the exact platforms
+for which their managed executables must be complete:
+
+```json
+{
+  "consumers": ["codex.portable", "pi.portable", "claude.portable"],
+  "platforms": ["darwin-arm64", "linux-amd64", "linux-arm64"]
+}
+```
+
+It does not repeat Skill grants or contain a Git remote. Consumer files remain
+the only authorization facts; Git configuration remains the transport fact.
+
 `executablesTarget` is required for a persistent consumer that authorizes a
 Skill with executables. `sm apply` writes native managed launchers there. Each
 launcher resolves through the active Skill target, so switching the Skill
@@ -170,9 +185,7 @@ sm update --repo ~/.sm <producer>
 
 # Cross-machine publication closure
 sm export --repo ~/.sm --ref HEAD \
-  --consumer codex.global \
-  --consumer pi.global \
-  --consumer claude.global \
+  --distribution portable-agents \
   --output /path/to/private-publication
 
 # Consumers
@@ -187,14 +200,16 @@ sm open --repo ~/.sm
 sm dashboard --repo ~/.sm --listen 127.0.0.1:7777
 ```
 
-`sm export` reads only the selected committed Git ref and emits the exact union
-of the selected consumer allowlists: `skills/`, `consumers/`, and
-`.sm-publication.json`. It never exports Producers, generation caches,
-launchers, or expanded machine-local paths. The output directory must be new or
-empty. Commit and push that derived tree to a private repository; on each target
-machine, check out the exact publication commit and run the existing `sm build`,
-`sm apply`, or `sm exec` flow. The publication branch discovers updates, while
-the publication commit identifies the executed input.
+`sm export` reads the distribution and its consumers only from the selected
+committed Git ref. It emits their exact Skill union, selected consumer files,
+and `.sm-publication.json`. Before publication it proves that every declared
+managed executable resolves for every distribution platform. It never exports
+the distribution policy itself, Producers, generation caches, launchers,
+expanded machine-local paths, Git remotes, or credentials. The output directory
+must be new or empty. Commit and push that derived tree with ordinary Git; on
+each target machine, check out the exact publication commit and run the existing
+`sm build`, `sm apply`, or `sm exec` flow. The publication branch discovers
+updates, while the publication commit identifies the executed input.
 
 `producer relocate` handles a moved Producer checkout. It requires a clean SSOT, runs the existing build in the new root, validates the complete declared Skill set, and commits only the Producer locator. It does not change the catalog or Agent generations; run `update` separately when the artifact should change.
 

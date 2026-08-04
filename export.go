@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 const publicationManifestName = ".sm-publication.json"
@@ -17,16 +18,15 @@ const publicationManifestName = ".sm-publication.json"
 type PublicationManifest struct {
 	Schema       int      `json:"schema"`
 	SourceCommit string   `json:"sourceCommit"`
+	Distribution string   `json:"distribution"`
 	Consumers    []string `json:"consumers"`
+	Platforms    []string `json:"platforms"`
 	ClosureHash  string   `json:"closureHash"`
 }
 
-// Export writes the exact union of the selected consumers' committed skill
-// allowlists. The destination is a derived tree; it is never read as source.
-func Export(repo, ref, destination string, consumerNames []string) (PublicationManifest, error) {
-	if len(consumerNames) == 0 {
-		return PublicationManifest{}, fmt.Errorf("at least one consumer is required")
-	}
+// Export writes the exact union selected by a committed distribution. The
+// destination is a derived tree; it is never read as source.
+func Export(repo, ref, destination, distributionName string) (PublicationManifest, error) {
 	root, err := repositoryRoot(repo)
 	if err != nil {
 		return PublicationManifest{}, err
@@ -35,14 +35,14 @@ func Export(repo, ref, destination string, consumerNames []string) (PublicationM
 	if err != nil {
 		return PublicationManifest{}, err
 	}
+	distribution, err := loadDistribution(root, commit, distributionName)
+	if err != nil {
+		return PublicationManifest{}, err
+	}
 
-	consumers := append([]string(nil), consumerNames...)
-	sort.Strings(consumers)
+	consumers := distribution.Consumers
 	skillSet := make(map[string]struct{})
-	for index, name := range consumers {
-		if index > 0 && name == consumers[index-1] {
-			return PublicationManifest{}, fmt.Errorf("duplicate consumer %q", name)
-		}
+	for _, name := range consumers {
 		consumer, err := loadConsumer(root, commit, name)
 		if err != nil {
 			return PublicationManifest{}, err
@@ -89,6 +89,9 @@ func Export(repo, ref, destination string, consumerNames []string) (PublicationM
 	if err := extractSkills(root, commit, skills, filepath.Join(staging, "skills")); err != nil {
 		return PublicationManifest{}, err
 	}
+	if err := validateDistributionExecutables(staging, skills, distribution.Platforms); err != nil {
+		return PublicationManifest{}, err
+	}
 	for _, name := range consumers {
 		contents, err := runGit(root, "show", commit+":consumers/"+name+".json")
 		if err != nil {
@@ -102,7 +105,10 @@ func Export(repo, ref, destination string, consumerNames []string) (PublicationM
 	if err != nil {
 		return PublicationManifest{}, err
 	}
-	manifest := PublicationManifest{Schema: 1, SourceCommit: commit, Consumers: consumers, ClosureHash: hash}
+	manifest := PublicationManifest{
+		Schema: 2, SourceCommit: commit, Distribution: distributionName,
+		Consumers: consumers, Platforms: distribution.Platforms, ClosureHash: hash,
+	}
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return PublicationManifest{}, err
@@ -122,6 +128,31 @@ func Export(repo, ref, destination string, consumerNames []string) (PublicationM
 	}
 	keep = true
 	return manifest, nil
+}
+
+func validateDistributionExecutables(root string, skills, platforms []string) error {
+	for _, skill := range skills {
+		skillRoot := filepath.Join(root, "skills", skill)
+		metadata, present, err := readOptionalSkillMetadata(skillRoot)
+		if err != nil {
+			return fmt.Errorf("skill %q: %w", skill, err)
+		}
+		if !present {
+			continue
+		}
+		if err := validateDeclaredExecutables(skillRoot, metadata); err != nil {
+			return fmt.Errorf("skill %q: %w", skill, err)
+		}
+		for command, declaration := range metadata.Executables {
+			for _, platform := range platforms {
+				parts := strings.SplitN(platform, "-", 2)
+				if _, err := resolveExecutablePath(declaration, parts[0], parts[1]); err != nil {
+					return fmt.Errorf("skill %q executable %q %w", skill, command, err)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func requireAbsentOrEmptyDirectory(target string) (bool, error) {

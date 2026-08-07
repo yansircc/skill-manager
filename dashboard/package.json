@@ -8,11 +8,11 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.2.0",
-    "svelte": "5.56.6",
-    "vite": "8.1.5"
+    "svelte": "5.56.8",
+    "vite": "8.2.0"
   },
   "dependencies": {
-    "@tanstack/table-core": "8.21.3",
+    "@tanstack/table-core": "9.0.0",
     "highlight.js": "11.11.1"
   }
 }

@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -104,6 +106,71 @@ func TestDashboardStateAndGrantUseSSOT(t *testing.T) {
 	writeFile(t, filepath.Join(repo, "skills", "malformed", "notes.txt"), "not a skill")
 	if _, err := dashboardState(repo); err == nil {
 		t.Fatal("dashboard accepted a non-empty skill directory without SKILL.md")
+	}
+}
+
+func TestDashboardStateExcludesPortableConsumers(t *testing.T) {
+	repo := newTestRepository(t)
+	writeNamedSkill(t, filepath.Join(repo, "skills", "alpha"), "alpha", "Alpha skill")
+	codexTarget := filepath.Join(t.TempDir(), "codex-skills")
+	portableTarget := filepath.Join(t.TempDir(), "codex-portable-skills")
+	writeConsumer(t, repo, "codex.global", Consumer{Adapter: "codex", Target: codexTarget, Skills: []string{"alpha"}})
+	writeConsumer(t, repo, "claude.global", Consumer{Adapter: "claude", Skills: []string{}})
+	writeConsumer(t, repo, "pi.global", Consumer{Adapter: "pi", Skills: []string{"alpha"}})
+	writeConsumer(t, repo, "codex.portable", Consumer{Adapter: "codex", Target: portableTarget, Skills: []string{"alpha"}})
+	writeConsumer(t, repo, "claude.portable", Consumer{Adapter: "claude", Skills: []string{"alpha"}})
+	writeConsumer(t, repo, "pi.portable", Consumer{Adapter: "pi", Skills: []string{"alpha"}})
+	writeDistribution(t, repo, "portable-agents", Distribution{
+		Consumers: []string{"codex.portable", "claude.portable", "pi.portable"},
+		Platforms: []string{"linux-amd64"},
+	})
+	commitAll(t, repo, "initial")
+
+	consumers, err := readConsumers(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consumers) != 6 {
+		t.Fatalf("SSOT consumers = %d, want 6 including portable", len(consumers))
+	}
+
+	state, err := dashboardState(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Agents) != 3 {
+		t.Fatalf("agents = %#v, want exactly three global entries", state.Agents)
+	}
+	wantAgents := []string{"codex.global", "claude.global", "pi.global"}
+	for i, want := range wantAgents {
+		if state.Agents[i].ID != want {
+			t.Fatalf("agents[%d] = %q, want %q (full %#v)", i, state.Agents[i].ID, want, state.Agents)
+		}
+	}
+	if len(state.Skills) != 1 {
+		t.Fatalf("skills = %#v", state.Skills)
+	}
+	wantGrants := []string{"codex.global", "pi.global"}
+	if !reflect.DeepEqual(state.Skills[0].Agents, wantGrants) {
+		t.Fatalf("skill agents = %#v, want %#v (portable grants excluded)", state.Skills[0].Agents, wantGrants)
+	}
+	if err := setGrant(repo, "alpha", grantRequest{Consumer: "pi.portable", Enabled: true}); err == nil {
+		t.Fatal("setGrant accepted a portable consumer")
+	}
+}
+
+func TestDashboardAgentRankIsDeterministic(t *testing.T) {
+	ids := []string{"zeta.global", "pi.global", "codex.global", "alpha.global", "claude.global"}
+	sort.Slice(ids, func(i, j int) bool {
+		ri, rj := dashboardAgentRank(ids[i]), dashboardAgentRank(ids[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return ids[i] < ids[j]
+	})
+	want := []string{"codex.global", "claude.global", "pi.global", "alpha.global", "zeta.global"}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("ranked = %#v, want %#v", ids, want)
 	}
 }
 

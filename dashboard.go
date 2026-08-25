@@ -280,6 +280,9 @@ func dashboardState(repo string) (DashboardState, error) {
 	}
 	grants := map[string][]string{}
 	for id, consumer := range consumers {
+		if !isDashboardConsumer(id) {
+			continue
+		}
 		for _, skill := range consumer.Skills {
 			grants[skill] = append(grants[skill], id)
 		}
@@ -337,11 +340,19 @@ func dashboardState(repo string) (DashboardState, error) {
 		state.Producers = append(state.Producers, DashboardProducer{ID: producer.ID, Root: producer.Root, RootLabel: displayPath(producer.Root), Note: producer.Note, BuildArgv: append([]string(nil), producer.Build.Argv...), SkillCount: len(producer.Skills), Status: status, StatusLabel: label})
 	}
 	for id, consumer := range consumers {
+		if !isDashboardConsumer(id) {
+			continue
+		}
 		name, short := agentIdentity(consumer.Adapter)
 		state.Agents = append(state.Agents, DashboardAgent{ID: id, Name: name, Short: short, SkillCount: len(consumer.Skills), Synced: consumerSynced(root, head, id, consumer, state.Dirty)})
 	}
-	rank := map[string]int{"codex.global": 0, "claude.global": 1, "pi.global": 2}
-	sort.Slice(state.Agents, func(i, j int) bool { return rank[state.Agents[i].ID] < rank[state.Agents[j].ID] })
+	sort.Slice(state.Agents, func(i, j int) bool {
+		ri, rj := dashboardAgentRank(state.Agents[i].ID), dashboardAgentRank(state.Agents[j].ID)
+		if ri != rj {
+			return ri < rj
+		}
+		return state.Agents[i].ID < state.Agents[j].ID
+	})
 	return state, nil
 }
 
@@ -396,6 +407,9 @@ func setGrant(repo, skill string, input grantRequest) error {
 	}
 	if err := validateID(input.Consumer); err != nil {
 		return err
+	}
+	if !isDashboardConsumer(input.Consumer) {
+		return fmt.Errorf("dashboard grants only support global consumers, got %q", input.Consumer)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "skills", skill, "SKILL.md")); err != nil {
 		return fmt.Errorf("unknown skill %q", skill)
@@ -544,6 +558,27 @@ func discoverSkillIDs(root, output string) ([]string, error) {
 	}
 	return ids, nil
 }
+
+// isDashboardConsumer reports whether a consumer participates in Dashboard Agent
+// cards and interactive grants. Portable distribution consumers stay in the SSOT
+// and export closures but are not interactive global environments.
+func isDashboardConsumer(id string) bool {
+	return strings.HasSuffix(id, ".global")
+}
+
+func dashboardAgentRank(id string) int {
+	switch id {
+	case "codex.global":
+		return 0
+	case "claude.global":
+		return 1
+	case "pi.global":
+		return 2
+	default:
+		return 100
+	}
+}
+
 func agentIdentity(adapter string) (string, string) {
 	switch adapter {
 	case "codex":

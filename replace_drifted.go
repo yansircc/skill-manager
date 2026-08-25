@@ -64,7 +64,11 @@ func ReplaceDrifted(repo, ref, consumerName, cache, evidenceOutput string) (Repl
 	if err != nil {
 		return ReplaceDriftedResult{}, err
 	}
-	if consumer.Adapter != "directory" && consumer.Adapter != "codex" {
+	adapter, err := lookupAgentAdapter(consumer.Adapter)
+	if err != nil {
+		return ReplaceDriftedResult{}, err
+	}
+	if !adapter.Persistent() {
 		return ReplaceDriftedResult{}, fmt.Errorf("consumer %q uses %s activation; use sm exec", consumerName, consumer.Adapter)
 	}
 	cache, err = cacheRoot(cache)

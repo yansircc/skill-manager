@@ -166,12 +166,12 @@ to `PATH` and do not use `executablesTarget`.
 
 Supported adapters:
 
-| Adapter | Activation |
-| --- | --- |
-| `directory` | Persistent symlink to an immutable generation |
-| `codex` | Persistent target plus verified Codex discovery profile |
-| `claude` | Ephemeral, closed profile through `sm exec` |
-| `pi` | Ephemeral, closed invocation through `sm exec` |
+| Adapter | Activation | Persistent verify | Closed verify proof |
+| --- | --- | --- | --- |
+| `directory` | Persistent symlink to an immutable generation | Projection and executables | Same as persistent |
+| `codex` | Persistent target plus verified Codex discovery profile | Projection, executables, and `agent-api` proof | Current discovery closure via Codex `skills/list` |
+| `claude` | Ephemeral, closed profile through `sm exec` | Use `sm exec` | Isolated profile and project `filesystem-guard` |
+| `pi` | Ephemeral, closed invocation through `sm exec` | Use `sm exec` | Launch args disable default discovery (`launch-closure`) |
 
 ## Commands
 
@@ -194,6 +194,7 @@ sm apply --repo ~/.sm <consumer>
 sm replace-drifted --repo ~/.sm --evidence-output /path/to/evidence <consumer>
 sm verify --repo ~/.sm <consumer>
 sm verify --repo ~/.sm --closed <consumer>
+sm verify --repo ~/.sm --closed --json <consumer>
 sm exec --repo ~/.sm <consumer> -- <agent arguments...>
 
 # UI
@@ -237,10 +238,14 @@ the symlink is replaced atomically, executable launchers are updated like `apply
 and `verify` must succeed afterward.
 
 `verify` proves the managed generation, active targets, command resolution, and
-presence of every authorized Skill. Extra non-system Codex Skills are reported
-as warnings. `verify --closed` additionally requires the complete non-system
-discovery surface to equal the committed consumer projection. `exec` constructs
-and reprobes a closed profile before starting the Agent.
+presence of every authorized Skill through the consumer's `AgentAdapter`. Extra
+non-system Codex Skills are reported as warnings. `verify --closed` additionally
+requires the adapter-specific closed proof: Codex discovery closure, Claude
+isolated profile/project filesystem guards, or Pi launch-argument closure.
+`verify --json` emits the same Verification value including adapter evidence
+(`agent-api`, `filesystem-guard`, or `launch-closure`) without changing the
+default text CLI. `exec` constructs and reprobes a closed profile before
+starting the Agent.
 
 ## Trust and security
 

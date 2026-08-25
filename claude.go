@@ -1,6 +1,7 @@
 package skillmanager
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -10,6 +11,74 @@ import (
 	"sort"
 	"strings"
 )
+
+type claudeAdapter struct{}
+
+func (claudeAdapter) Name() string     { return "claude" }
+func (claudeAdapter) Persistent() bool { return false }
+
+func (claudeAdapter) PrepareProjection(root, consumerName string, consumer Consumer) error {
+	skillsRoot := filepath.Join(root, "skills")
+	if err := os.Mkdir(skillsRoot, 0o755); err != nil {
+		return err
+	}
+	for _, id := range consumer.Skills {
+		if err := os.Rename(filepath.Join(root, id), filepath.Join(skillsRoot, id)); err != nil {
+			return fmt.Errorf("shape Claude skill %q: %w", id, err)
+		}
+	}
+	manifestRoot := filepath.Join(root, ".claude-plugin")
+	if err := os.Mkdir(manifestRoot, 0o755); err != nil {
+		return err
+	}
+	pluginName := strings.ToLower(consumerName)
+	pluginName = strings.NewReplacer(".", "-", "_", "-").Replace(pluginName)
+	manifest := map[string]string{
+		"name":        "sm-" + pluginName,
+		"version":     "1.0.0",
+		"description": "Immutable sm projection for " + consumerName,
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(filepath.Join(manifestRoot, "plugin.json"), data, 0o644)
+}
+
+func (claudeAdapter) LaunchCommand(built Result, agentArgs []string) (Result, *exec.Cmd, error) {
+	return claudeAgentCommand(built, agentArgs)
+}
+
+func (claudeAdapter) Verify(built Result, closed bool) (AdapterVerifyResult, error) {
+	if !closed {
+		return AdapterVerifyResult{}, fmt.Errorf("consumer %q uses ephemeral claude activation; use sm exec or verify --closed", built.Consumer)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return AdapterVerifyResult{}, err
+	}
+	if err := validateClaudeProjectClosure(cwd); err != nil {
+		return AdapterVerifyResult{}, err
+	}
+	profile, err := prepareClaudeProfile(built.Generation, built.Consumer)
+	if err != nil {
+		return AdapterVerifyResult{}, err
+	}
+	if err := validateClaudeProfileClosure(profile); err != nil {
+		return AdapterVerifyResult{}, err
+	}
+	records, err := claudeFilesystemDiscovery(cwd, profile)
+	if err != nil {
+		return AdapterVerifyResult{}, err
+	}
+	return AdapterVerifyResult{
+		Evidence: &VerificationEvidence{
+			Kind:      ProofKindFilesystemGuard,
+			Discovery: records,
+		},
+	}, nil
+}
 
 func claudeAgentCommand(built Result, agentArgs []string) (Result, *exec.Cmd, error) {
 	cwd, err := os.Getwd()
@@ -88,22 +157,8 @@ func validateClaudeProfileClosure(profile string) error {
 }
 
 func validateClaudeProjectClosure(cwd string) error {
-	root := cwd
-	if output, err := runGit(cwd, "rev-parse", "--show-toplevel"); err == nil {
-		root = strings.TrimSpace(output)
-	}
-	paths, err := findClaudeSkillSources(root)
+	paths, err := claudeProjectSkillPaths(cwd)
 	if err != nil {
-		return err
-	}
-	managed := "/Library/Application Support/ClaudeCode/.claude"
-	if info, err := os.Stat(managed); err == nil && info.IsDir() {
-		managedPaths, err := findClaudeSkillSources(managed)
-		if err != nil {
-			return err
-		}
-		paths = append(paths, managedPaths...)
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	if len(paths) == 0 {
@@ -111,6 +166,89 @@ func validateClaudeProjectClosure(cwd string) error {
 	}
 	sort.Strings(paths)
 	return fmt.Errorf("claude discovery closure contains project or managed skills outside the SSOT generation:\n  %s", strings.Join(paths, "\n  "))
+}
+
+func claudeFilesystemDiscovery(cwd, profile string) ([]DiscoveryRecord, error) {
+	var records []DiscoveryRecord
+	projectPaths, err := claudeProjectSkillPaths(cwd)
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range projectPaths {
+		records = append(records, DiscoveryRecord{
+			Name:    filepath.Base(filepath.Dir(path)),
+			Path:    path,
+			Source:  "project",
+			Enabled: true,
+		})
+	}
+	for _, root := range []string{
+		filepath.Join(profile, "skills"),
+		filepath.Join(profile, "commands"),
+		filepath.Join(profile, "plugins"),
+	} {
+		info, err := os.Stat(root)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			continue
+		}
+		source := filepath.Base(root)
+		err = filepath.WalkDir(root, func(name string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			if entry.Name() == "SKILL.md" || strings.HasSuffix(entry.Name(), ".md") && source == "commands" {
+				records = append(records, DiscoveryRecord{
+					Name:    filepath.Base(filepath.Dir(name)),
+					Path:    name,
+					Source:  "profile",
+					Scope:   source,
+					Enabled: true,
+				})
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Path == records[j].Path {
+			return records[i].Name < records[j].Name
+		}
+		return records[i].Path < records[j].Path
+	})
+	return records, nil
+}
+
+func claudeProjectSkillPaths(cwd string) ([]string, error) {
+	root := cwd
+	if output, err := runGit(cwd, "rev-parse", "--show-toplevel"); err == nil {
+		root = strings.TrimSpace(output)
+	}
+	paths, err := findClaudeSkillSources(root)
+	if err != nil {
+		return nil, err
+	}
+	managed := "/Library/Application Support/ClaudeCode/.claude"
+	if info, err := os.Stat(managed); err == nil && info.IsDir() {
+		managedPaths, err := findClaudeSkillSources(managed)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, managedPaths...)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return paths, nil
 }
 
 func findClaudeSkillSources(root string) ([]string, error) {

@@ -43,17 +43,18 @@ type Marker struct {
 }
 
 type Result struct {
-	Commit            string
-	Consumer          string
-	Adapter           string
-	Generation        string
-	Target            string
-	ExecutablesTarget string
+	Commit            string `json:"commit"`
+	Consumer          string `json:"consumer"`
+	Adapter           string `json:"adapter"`
+	Generation        string `json:"generation"`
+	Target            string `json:"target,omitempty"`
+	ExecutablesTarget string `json:"executablesTarget,omitempty"`
 }
 
 type Verification struct {
-	Result         Result
-	ExternalSkills []string
+	Result         Result                `json:"result"`
+	ExternalSkills []string              `json:"externalSkills,omitempty"`
+	Evidence       *VerificationEvidence `json:"evidence,omitempty"`
 }
 
 type ProcessExitError struct {
@@ -249,7 +250,11 @@ func Apply(repo, ref, consumerName, cache string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if built.Adapter != "directory" && built.Adapter != "codex" {
+	adapter, err := lookupAgentAdapter(built.Adapter)
+	if err != nil {
+		return Result{}, err
+	}
+	if !adapter.Persistent() {
 		return Result{}, fmt.Errorf("consumer %q uses %s activation; use sm exec", consumerName, built.Adapter)
 	}
 	previousExecutablesTarget, err := activeExecutablesTarget(built.Target, built.Consumer)
@@ -303,6 +308,10 @@ func VerifyMode(repo, ref, consumerName, cache string, closed bool) (Verificatio
 	if err != nil {
 		return Verification{}, err
 	}
+	adapter, err := lookupAgentAdapter(consumer.Adapter)
+	if err != nil {
+		return Verification{}, err
+	}
 	cache, err = cacheRoot(cache)
 	if err != nil {
 		return Verification{}, err
@@ -323,58 +332,48 @@ func VerifyMode(repo, ref, consumerName, cache string, closed bool) (Verificatio
 	if err := validateGeneration(generation, expected); err != nil {
 		return Verification{}, err
 	}
-	if consumer.Adapter != "directory" && consumer.Adapter != "codex" {
+	if !adapter.Persistent() && !closed {
 		return Verification{}, fmt.Errorf("consumer %q uses ephemeral %s activation; use sm exec", consumerName, consumer.Adapter)
 	}
-	target, err := expandHome(consumer.Target)
-	if err != nil {
-		return Verification{}, err
-	}
-	info, err := os.Lstat(target)
-	if err != nil {
-		return Verification{}, fmt.Errorf("inspect target: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		return Verification{}, fmt.Errorf("target is not an sm projection: %s", target)
-	}
-	actual, err := filepath.EvalSymlinks(target)
-	if err != nil {
-		return Verification{}, fmt.Errorf("resolve target: %w", err)
-	}
-	want, err := filepath.EvalSymlinks(generation)
-	if err != nil {
-		return Verification{}, fmt.Errorf("resolve generation: %w", err)
-	}
-	if actual != want {
-		return Verification{}, fmt.Errorf("target drift: points to %s, want %s", actual, want)
+	if adapter.Persistent() {
+		target, err := expandHome(consumer.Target)
+		if err != nil {
+			return Verification{}, err
+		}
+		info, err := os.Lstat(target)
+		if err != nil {
+			return Verification{}, fmt.Errorf("inspect target: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return Verification{}, fmt.Errorf("target is not an sm projection: %s", target)
+		}
+		actual, err := filepath.EvalSymlinks(target)
+		if err != nil {
+			return Verification{}, fmt.Errorf("resolve target: %w", err)
+		}
+		want, err := filepath.EvalSymlinks(generation)
+		if err != nil {
+			return Verification{}, fmt.Errorf("resolve generation: %w", err)
+		}
+		if actual != want {
+			return Verification{}, fmt.Errorf("target drift: points to %s, want %s", actual, want)
+		}
 	}
 	verified := result(commit, consumerName, generation, consumer)
-	if err := verifyExecutableShims(verified); err != nil {
+	if adapter.Persistent() {
+		if err := verifyExecutableShims(verified); err != nil {
+			return Verification{}, err
+		}
+	}
+	adapterResult, err := adapter.Verify(verified, closed)
+	if err != nil {
 		return Verification{}, err
 	}
-	verification := Verification{Result: verified}
-	if consumer.Adapter == "codex" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return Verification{}, err
-		}
-		skills, err := listCodexSkills(cwd)
-		if err != nil {
-			return Verification{}, fmt.Errorf("inspect Codex discovery closure: %w", err)
-		}
-		unmanaged, missing, err := codexClosureDiff(skills, generation)
-		if err != nil {
-			return Verification{}, err
-		}
-		if len(missing) != 0 {
-			return Verification{}, codexClosureError(nil, missing)
-		}
-		if closed && len(unmanaged) != 0 {
-			return Verification{}, codexClosureError(unmanaged, nil)
-		}
-		verification.ExternalSkills = unmanaged
-	}
-	return verification, nil
+	return Verification{
+		Result:         verified,
+		ExternalSkills: adapterResult.ExternalSkills,
+		Evidence:       adapterResult.Evidence,
+	}, nil
 }
 
 func result(commit, consumerName, generation string, consumer Consumer) Result {
@@ -433,10 +432,11 @@ func loadConsumer(repo, commit, name string) (Consumer, error) {
 }
 
 func validateConsumer(consumer Consumer) error {
-	if consumer.Adapter != "directory" && consumer.Adapter != "codex" && consumer.Adapter != "pi" && consumer.Adapter != "claude" {
-		return fmt.Errorf("unsupported adapter %q", consumer.Adapter)
+	adapter, err := lookupAgentAdapter(consumer.Adapter)
+	if err != nil {
+		return err
 	}
-	if consumer.Adapter == "directory" || consumer.Adapter == "codex" {
+	if adapter.Persistent() {
 		if consumer.Target == "" {
 			return fmt.Errorf("target is required")
 		}
@@ -447,7 +447,7 @@ func validateConsumer(consumer Consumer) error {
 		return fmt.Errorf("target is invalid for %s adapter", consumer.Adapter)
 	}
 	if consumer.ExecutablesTarget != "" {
-		if consumer.Adapter != "directory" && consumer.Adapter != "codex" {
+		if !adapter.Persistent() {
 			return fmt.Errorf("executablesTarget is invalid for %s adapter", consumer.Adapter)
 		}
 		if consumer.ExecutablesTarget != "~" && !strings.HasPrefix(consumer.ExecutablesTarget, "~/") && !filepath.IsAbs(consumer.ExecutablesTarget) {
@@ -475,18 +475,11 @@ func AgentCommand(repo, ref, consumerName, cache string, agentArgs []string) (Re
 	if err != nil {
 		return Result{}, nil, err
 	}
-	var result Result
-	var command *exec.Cmd
-	switch built.Adapter {
-	case "pi":
-		result, command, err = piAgentCommand(built, agentArgs)
-	case "claude":
-		result, command, err = claudeAgentCommand(built, agentArgs)
-	case "codex":
-		result, command, err = codexAgentCommand(built, agentArgs)
-	default:
-		return Result{}, nil, fmt.Errorf("consumer %q adapter %q has no exec contract", consumerName, built.Adapter)
+	adapter, err := lookupAgentAdapter(built.Adapter)
+	if err != nil {
+		return Result{}, nil, err
 	}
+	result, command, err := adapter.LaunchCommand(built, agentArgs)
 	if err != nil {
 		return Result{}, nil, err
 	}
@@ -515,46 +508,12 @@ func rejectSkillExpansionArguments(arguments []string) error {
 
 var findExecutable = exec.LookPath
 
-func piAgentCommand(built Result, agentArgs []string) (Result, *exec.Cmd, error) {
-	binary, err := findExecutable("pi")
-	if err != nil {
-		return Result{}, nil, fmt.Errorf("find pi executable: %w", err)
-	}
-	arguments := []string{"--no-extensions", "--no-skills", "--skill", built.Generation}
-	arguments = append(arguments, agentArgs...)
-	return built, exec.Command(binary, arguments...), nil
-}
-
 func prepareAdapterArtifact(root, consumerName string, consumer Consumer) error {
-	if consumer.Adapter != "claude" {
-		return nil
-	}
-	skillsRoot := filepath.Join(root, "skills")
-	if err := os.Mkdir(skillsRoot, 0o755); err != nil {
-		return err
-	}
-	for _, id := range consumer.Skills {
-		if err := os.Rename(filepath.Join(root, id), filepath.Join(skillsRoot, id)); err != nil {
-			return fmt.Errorf("shape Claude skill %q: %w", id, err)
-		}
-	}
-	manifestRoot := filepath.Join(root, ".claude-plugin")
-	if err := os.Mkdir(manifestRoot, 0o755); err != nil {
-		return err
-	}
-	pluginName := strings.ToLower(consumerName)
-	pluginName = strings.NewReplacer(".", "-", "_", "-").Replace(pluginName)
-	manifest := map[string]string{
-		"name":        "sm-" + pluginName,
-		"version":     "1.0.0",
-		"description": "Immutable sm projection for " + consumerName,
-	}
-	data, err := json.MarshalIndent(manifest, "", "  ")
+	adapter, err := lookupAgentAdapter(consumer.Adapter)
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	return os.WriteFile(filepath.Join(manifestRoot, "plugin.json"), data, 0o644)
+	return adapter.PrepareProjection(root, consumerName, consumer)
 }
 
 func RunConsumer(repo, ref, consumerName, cache string, agentArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {

@@ -21,8 +21,63 @@ type CodexSkill struct {
 	Enabled bool   `json:"enabled"`
 }
 
+type codexAdapter struct{}
+
+func (codexAdapter) Name() string     { return "codex" }
+func (codexAdapter) Persistent() bool { return true }
+
+func (codexAdapter) PrepareProjection(string, string, Consumer) error {
+	return nil
+}
+
+func (codexAdapter) LaunchCommand(built Result, agentArgs []string) (Result, *exec.Cmd, error) {
+	return codexAgentCommand(built, agentArgs)
+}
+
+func (codexAdapter) Verify(built Result, closed bool) (AdapterVerifyResult, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return AdapterVerifyResult{}, err
+	}
+	skills, err := listCodexSkills(cwd)
+	if err != nil {
+		return AdapterVerifyResult{}, fmt.Errorf("inspect Codex discovery closure: %w", err)
+	}
+	unmanaged, missing, err := codexClosureDiff(skills, built.Generation)
+	if err != nil {
+		return AdapterVerifyResult{}, err
+	}
+	if len(missing) != 0 {
+		return AdapterVerifyResult{}, codexClosureError(nil, missing)
+	}
+	if closed && len(unmanaged) != 0 {
+		return AdapterVerifyResult{}, codexClosureError(unmanaged, nil)
+	}
+	return AdapterVerifyResult{
+		ExternalSkills: unmanaged,
+		Evidence: &VerificationEvidence{
+			Kind:      ProofKindAgentAPI,
+			Discovery: discoveryFromCodex(skills),
+		},
+	}, nil
+}
+
 var listCodexSkills = probeCodexSkills
 var listConfiguredCodexSkills = probeCodexSkillsWithArgs
+
+func discoveryFromCodex(skills []CodexSkill) []DiscoveryRecord {
+	records := make([]DiscoveryRecord, 0, len(skills))
+	for _, skill := range skills {
+		records = append(records, DiscoveryRecord{
+			Name:    skill.Name,
+			Path:    skill.Path,
+			Scope:   skill.Scope,
+			Source:  "codex",
+			Enabled: skill.Enabled,
+		})
+	}
+	return records
+}
 
 func probeCodexSkills(cwd string) ([]CodexSkill, error) {
 	return probeCodexSkillsWithArgs(cwd, nil)

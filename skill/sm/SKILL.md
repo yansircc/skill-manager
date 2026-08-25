@@ -86,13 +86,16 @@ sm apply --repo ~/.sm <consumer-id>
 sm replace-drifted --repo ~/.sm --evidence-output /path/to/evidence <consumer-id>
 sm verify --repo ~/.sm <consumer-id>
 sm verify --repo ~/.sm --closed <consumer-id>
+sm verify --repo ~/.sm --closed --json <consumer-id>
 sm exec --repo ~/.sm <consumer-id> -- <agent-arguments...>
 ```
 
 `verify` requires every managed Skill and executable projection to be present;
-it reports external Codex Skills without failing. Use `verify --closed` when the
-persistent discovery surface itself must equal the SSOT. Use `sm exec` to derive
-and prove a closed execution profile without deleting platform or plugin Skills.
+it reports external Codex Skills without failing and attaches adapter proof
+evidence in `--json` output. Use `verify --closed` when the persistent discovery
+surface itself must equal the SSOT (Codex), or when Claude/Pi closed proofs must
+hold. Use `sm exec` to derive and prove a closed execution profile without
+deleting platform or plugin Skills.
 Use `sm replace-drifted` only when `apply` refuses an sm-owned target whose
 projection content hash has drifted; it preserves the old generation, writes
 evidence, and verifies after activation.

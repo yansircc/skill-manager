@@ -211,8 +211,10 @@ func RunCLI(args []string, stdout, stderr io.Writer) error {
 		cache := fs.String("cache", "", "generation cache; defaults to ~/.cache/sm")
 		evidenceOutput := ""
 		closed := false
+		asJSON := false
 		if args[0] == "verify" {
 			fs.BoolVar(&closed, "closed", false, "require the complete discovery surface to match the SSOT")
+			fs.BoolVar(&asJSON, "json", false, "emit verification JSON including adapter evidence")
 		}
 		if args[0] == "replace-drifted" {
 			fs.StringVar(&evidenceOutput, "evidence-output", "", "new or empty evidence directory")
@@ -265,6 +267,11 @@ func RunCLI(args []string, stdout, stderr io.Writer) error {
 			verification, err := VerifyMode(*repo, *ref, consumer, *cache, closed)
 			if err != nil {
 				return err
+			}
+			if asJSON {
+				encoder := json.NewEncoder(stdout)
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(verification)
 			}
 			for _, external := range verification.ExternalSkills {
 				fmt.Fprintf(stderr, "warning: external Codex skill: %s\n", external)
@@ -323,7 +330,7 @@ Usage:
   sm build [--repo path] [--ref commit] consumer
   sm apply [--repo path] [--ref commit] consumer
   sm replace-drifted [--repo path] [--ref commit] [--cache path] --evidence-output directory consumer
-  sm verify [--repo path] [--ref commit] [--closed] consumer
+  sm verify [--repo path] [--ref commit] [--closed] [--json] consumer
   sm exec [--repo path] [--ref commit] consumer [-- agent arguments...]
   sm version`)
 }

@@ -164,14 +164,14 @@ func requireAbsentOrEmptyDirectory(target string) (bool, error) {
 		return false, err
 	}
 	if !info.IsDir() {
-		return false, fmt.Errorf("export destination exists and is not a directory: %s", target)
+		return false, fmt.Errorf("destination exists and is not a directory: %s", target)
 	}
 	entries, err := os.ReadDir(target)
 	if err != nil {
 		return false, err
 	}
 	if len(entries) != 0 {
-		return false, fmt.Errorf("export destination is not empty: %s", target)
+		return false, fmt.Errorf("destination is not empty: %s", target)
 	}
 	return true, nil
 }

@@ -204,17 +204,34 @@ func RunCLI(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stdout, "%s\t%s\t%s\n", manifest.SourceCommit, manifest.ClosureHash, *output)
 		return nil
 
-	case "build", "apply", "verify", "exec":
+	case "build", "apply", "verify", "exec", "replace-drifted":
 		fs := newFlagSet(args[0], stderr)
 		repo := fs.String("repo", ".", "SSOT repository")
 		ref := fs.String("ref", "HEAD", "published Git commit")
 		cache := fs.String("cache", "", "generation cache; defaults to ~/.cache/sm")
+		evidenceOutput := ""
 		closed := false
 		if args[0] == "verify" {
 			fs.BoolVar(&closed, "closed", false, "require the complete discovery surface to match the SSOT")
 		}
+		if args[0] == "replace-drifted" {
+			fs.StringVar(&evidenceOutput, "evidence-output", "", "new or empty evidence directory")
+		}
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
+		}
+		if args[0] == "replace-drifted" {
+			if fs.NArg() != 1 || evidenceOutput == "" {
+				return fmt.Errorf("usage: sm replace-drifted [--repo path] [--ref commit] [--cache path] --evidence-output directory consumer")
+			}
+			result, err := ReplaceDrifted(*repo, *ref, fs.Arg(0), *cache, evidenceOutput)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "%s -> %s\n", result.Target, result.Generation)
+			fmt.Fprintf(stdout, "evidence\t%s\n", result.EvidenceDir)
+			fmt.Fprintf(stdout, "verified %s at %s\n", result.Verification.Consumer, result.Verification.Commit)
+			return nil
 		}
 		if args[0] != "exec" && fs.NArg() != 1 || args[0] == "exec" && fs.NArg() < 1 {
 			return fmt.Errorf("usage: sm %s [--repo path] [--ref commit] consumer", args[0])
@@ -305,6 +322,7 @@ Usage:
   sm export [--repo path] [--ref commit] --distribution name --output directory
   sm build [--repo path] [--ref commit] consumer
   sm apply [--repo path] [--ref commit] consumer
+  sm replace-drifted [--repo path] [--ref commit] [--cache path] --evidence-output directory consumer
   sm verify [--repo path] [--ref commit] [--closed] consumer
   sm exec [--repo path] [--ref commit] consumer [-- agent arguments...]
   sm version`)

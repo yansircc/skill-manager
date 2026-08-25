@@ -83,6 +83,7 @@ For CLI projection work:
 ```sh
 sm build --repo ~/.sm <consumer-id>
 sm apply --repo ~/.sm <consumer-id>
+sm replace-drifted --repo ~/.sm --evidence-output /path/to/evidence <consumer-id>
 sm verify --repo ~/.sm <consumer-id>
 sm verify --repo ~/.sm --closed <consumer-id>
 sm exec --repo ~/.sm <consumer-id> -- <agent-arguments...>
@@ -92,6 +93,9 @@ sm exec --repo ~/.sm <consumer-id> -- <agent-arguments...>
 it reports external Codex Skills without failing. Use `verify --closed` when the
 persistent discovery surface itself must equal the SSOT. Use `sm exec` to derive
 and prove a closed execution profile without deleting platform or plugin Skills.
+Use `sm replace-drifted` only when `apply` refuses an sm-owned target whose
+projection content hash has drifted; it preserves the old generation, writes
+evidence, and verifies after activation.
 
 If a Skill declares `executables` in its frontmatter, persistent consumers must
 declare an `executablesTarget` directory already present on the Agent process's

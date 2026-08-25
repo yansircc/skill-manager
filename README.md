@@ -191,6 +191,7 @@ sm export --repo ~/.sm --ref HEAD \
 # Consumers
 sm build --repo ~/.sm <consumer>
 sm apply --repo ~/.sm <consumer>
+sm replace-drifted --repo ~/.sm --evidence-output /path/to/evidence <consumer>
 sm verify --repo ~/.sm <consumer>
 sm verify --repo ~/.sm --closed <consumer>
 sm exec --repo ~/.sm <consumer> -- <agent arguments...>
@@ -221,9 +222,19 @@ prints old/new artifact hashes, observed Producer Git state, changed catalog
 files, and the review handoff. A dirty Producer HEAD is reported as observed
 state, not claimed as artifact provenance.
 
-`build`, `apply`, `verify`, and `exec` read a Git commit, not uncommitted
+`build`, `apply`, `replace-drifted`, `verify`, and `exec` read a Git commit, not uncommitted
 working-tree state. When `update` reports `pendingCommit=true`, review and commit
 the catalog before building; otherwise build still reads the previous HEAD.
+
+`apply` activates only when the existing target is missing, an empty directory, or
+an intact sm-owned generation for the same consumer. It refuses content-hash drift.
+`replace-drifted` is the deliberate recovery path for that case: the active target
+must already be an sm projection symlink whose marker matches the consumer and
+schema, ordinary directories and non-sm symlinks are rejected, the old generation is
+preserved, durable evidence is written to a new or empty `--evidence-output`
+directory (hashes, markers, changed paths when feasible; no skill file contents),
+the symlink is replaced atomically, executable launchers are updated like `apply`,
+and `verify` must succeed afterward.
 
 `verify` proves the managed generation, active targets, command resolution, and
 presence of every authorized Skill. Extra non-system Codex Skills are reported

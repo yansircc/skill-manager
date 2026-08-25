@@ -741,6 +741,15 @@ func extractTar(reader io.Reader, destination string, selected []string) error {
 }
 
 func activate(target, generation, consumer string) error {
+	return activateGeneration(target, generation, consumer, true)
+}
+
+// activateGeneration atomically points target at generation. When
+// validatePrevious is true, an existing symlink must resolve to an intact
+// sm-owned generation for the same consumer (Apply). When false, the caller
+// has already proven ownership and may replace a drifted or broken symlink
+// without re-validating the previous generation's content hash.
+func activateGeneration(target, generation, consumer string, validatePrevious bool) error {
 	target, err := expandHome(target)
 	if err != nil {
 		return err
@@ -757,14 +766,19 @@ func activate(target, generation, consumer string) error {
 	case err != nil:
 		return err
 	case info.Mode()&os.ModeSymlink != 0:
-		resolved, resolveErr := filepath.EvalSymlinks(target)
-		if resolveErr != nil {
-			return fmt.Errorf("existing target is a broken symlink: %s", target)
-		}
-		if err := validateGeneration(resolved, Marker{Schema: 1, Consumer: consumer}); err != nil {
-			return fmt.Errorf("existing target is not owned by sm: %w", err)
+		if validatePrevious {
+			resolved, resolveErr := filepath.EvalSymlinks(target)
+			if resolveErr != nil {
+				return fmt.Errorf("existing target is a broken symlink: %s", target)
+			}
+			if err := validateGeneration(resolved, Marker{Schema: 1, Consumer: consumer}); err != nil {
+				return fmt.Errorf("existing target is not owned by sm: %w", err)
+			}
 		}
 	case info.IsDir():
+		if !validatePrevious {
+			return fmt.Errorf("refusing to replace unmanaged target: %s", target)
+		}
 		entries, readErr := os.ReadDir(target)
 		if readErr != nil {
 			return readErr
@@ -801,16 +815,27 @@ func activate(target, generation, consumer string) error {
 }
 
 func validateGeneration(root string, expected Marker) error {
+	actual, err := readMatchingGenerationMarker(root, expected)
+	if err != nil {
+		return err
+	}
+	return validateGenerationContent(root, actual)
+}
+
+// readMatchingGenerationMarker requires a real directory and a parseable
+// marker whose declared identity fields match any non-zero expected values.
+// It does not hash tree contents.
+func readMatchingGenerationMarker(root string, expected Marker) (Marker, error) {
 	rootInfo, err := os.Lstat(root)
 	if err != nil {
-		return fmt.Errorf("inspect generation: %w", err)
+		return Marker{}, fmt.Errorf("inspect generation: %w", err)
 	}
 	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("generation is not a real directory: %s", root)
+		return Marker{}, fmt.Errorf("generation is not a real directory: %s", root)
 	}
 	actual, err := readGenerationMarker(root)
 	if err != nil {
-		return err
+		return Marker{}, err
 	}
 	if expected.Schema != 0 && actual.Schema != expected.Schema ||
 		expected.Commit != "" && actual.Commit != expected.Commit ||
@@ -818,8 +843,12 @@ func validateGeneration(root string, expected Marker) error {
 		expected.Compiler != "" && actual.Compiler != expected.Compiler ||
 		expected.TreeHash != "" && actual.TreeHash != expected.TreeHash ||
 		expected.Commit != "" && actual.ExecutablesTarget != expected.ExecutablesTarget {
-		return fmt.Errorf("projection marker does not match requested generation")
+		return Marker{}, fmt.Errorf("projection marker does not match requested generation")
 	}
+	return actual, nil
+}
+
+func validateGenerationContent(root string, actual Marker) error {
 	hash, err := hashTree(root)
 	if err != nil {
 		return err
@@ -837,6 +866,26 @@ func validateGeneration(root string, expected Marker) error {
 	return assertReadOnly(root)
 }
 
+// inspectOwnedProjection accepts an sm projection directory whose marker
+// matches schema and consumer. Content hash drift is allowed.
+func inspectOwnedProjection(root, consumer string) (Marker, string, error) {
+	actual, err := readMatchingGenerationMarker(root, Marker{Schema: 1, Consumer: consumer})
+	if err != nil {
+		return Marker{}, "", err
+	}
+	if actual.Schema != 1 {
+		return Marker{}, "", fmt.Errorf("projection marker has unsupported schema %d", actual.Schema)
+	}
+	if actual.Consumer == "" || actual.Commit == "" || actual.Compiler == "" || actual.TreeHash == "" {
+		return Marker{}, "", fmt.Errorf("projection marker is incomplete")
+	}
+	hash, err := hashTree(root)
+	if err != nil {
+		return Marker{}, "", err
+	}
+	return actual, hash, nil
+}
+
 func readGenerationMarker(root string) (Marker, error) {
 	data, err := os.ReadFile(filepath.Join(root, markerName))
 	if err != nil {
@@ -852,6 +901,14 @@ func readGenerationMarker(root string) (Marker, error) {
 }
 
 func activeExecutablesTarget(target, consumer string) (string, error) {
+	return activeExecutablesTargetMode(target, consumer, false)
+}
+
+func activeExecutablesTargetAllowingDrift(target, consumer string) (string, error) {
+	return activeExecutablesTargetMode(target, consumer, true)
+}
+
+func activeExecutablesTargetMode(target, consumer string, allowDrift bool) (string, error) {
 	info, err := os.Lstat(target)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
@@ -866,7 +923,11 @@ func activeExecutablesTarget(target, consumer string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := validateGeneration(generation, Marker{Schema: 1, Consumer: consumer}); err != nil {
+	if allowDrift {
+		if _, _, err := inspectOwnedProjection(generation, consumer); err != nil {
+			return "", fmt.Errorf("existing active target is not owned by sm: %w", err)
+		}
+	} else if err := validateGeneration(generation, Marker{Schema: 1, Consumer: consumer}); err != nil {
 		return "", fmt.Errorf("existing active target is not owned by sm: %w", err)
 	}
 	marker, err := readGenerationMarker(generation)

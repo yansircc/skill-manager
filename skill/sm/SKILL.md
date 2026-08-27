@@ -23,10 +23,11 @@ Producer repo -> external artifact -> ~/.sm/skills -> consumer generation -> Age
 ## Inspect before changing
 
 ```sh
-git -C ~/.sm status --short
-sm producers --repo ~/.sm
+sm status --repo ~/.sm <producer-id>
 sm scan --repo ~/.sm --json <producer-id>
 ```
+
+`sm status` is the cross-layer preflight: it reports Producer root/HEAD/dirty state, canonical Skill presence, catalog HEAD/pending commit, and the exact next review command. Use `--json` when another tool consumes the state. Omit `<producer-id>` only for an explicitly requested fleet view.
 
 Treat `new`, `updated`, `conflict`, and `invalid` as distinct facts. Do not publish through conflicts or invalid artifacts.
 Omit `<producer-id>` only for an explicitly requested fleet audit.

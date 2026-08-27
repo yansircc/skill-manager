@@ -30,6 +30,24 @@ func RunCLI(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch args[0] {
+	case "status":
+		fs := newFlagSet("status", stderr)
+		repo := fs.String("repo", ".", "SSOT repository")
+		asJSON := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		report, err := Status(*repo, fs.Args())
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			encoder := json.NewEncoder(stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(report)
+		}
+		PrintStatus(report, stdout)
+		return nil
 	case "dashboard", "open":
 		fs := newFlagSet(args[0], stderr)
 		repo := fs.String("repo", "~/.sm", "SSOT repository")
@@ -320,6 +338,7 @@ Usage:
   sm open [--repo path] [--listen address]
   sm dashboard [--repo path] [--listen address]
   sm producers [--repo path] [--json]
+  sm status [--repo path] [--json] [producer...]
   sm producer relocate [--repo path] producer new-root
   sm scan [--repo path] [--json] [producer...]
   sm produce [--repo path] producer...
